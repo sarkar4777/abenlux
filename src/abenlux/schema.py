@@ -184,5 +184,10 @@ class DerivedRecord:
     attribution_method: Optional[str] = None  # "ticket_join" | "repo_join" | "semantic" | "none"
     attribution_confidence: float = 0.0       # 1.0 for joins, <1 for semantic, 0 for orphan
 
+    # purpose / traceability (content-free): WHAT the spend is for, and the trace to the ticket
+    ticket_id: Optional[str] = None           # e.g. "ACME-1500", the trace handle for the work
+    work_type: Optional[str] = None           # feature | fix | refactor | exploration | chore | ...
+    work_type_source: Optional[str] = None    # "branch" | "prompt" | "none" (how we know)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

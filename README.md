@@ -4,13 +4,14 @@
 
 ### The AI spend → value attribution plane
 
-**See where every AI token goes, tie it to a business objective, catch budget overruns before they
-happen, and keep developers private from management — across every IDE and CLI coding tool.**
+**See where every AI token goes, know *what it was for*, tie it to a business objective, catch budget
+overruns before they happen, and keep developers private from management — across every IDE and CLI
+coding tool. It even learns your team's intent vocabulary so it gets smarter and cheaper over time.**
 
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-121%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-156%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -19,21 +20,40 @@ happen, and keep developers private from management — across every IDE and CLI
 
 `aben` + *lux* — it puts light on where AI tokens go. Abenlux captures token usage from Claude Code,
 Codex, Gemini CLI, Cursor, Copilot, aider, Cline, Continue, opencode, Crush, Pi, Droid and more,
-normalizes it to one schema, **attributes spend to an objective by a join (not a guess)**, prices it
-in dollars, and runs **objective budgets with run-rate forecast and drift alerts** — while every
-prompt is redacted on the developer's own machine and management only ever sees privacy-preserving
-aggregates.
+normalizes it to one schema, **attributes spend to a business objective by a join (not a guess)**,
+classifies **what the spend is for** (new feature vs bug fix vs refactor), prices it in dollars, runs
+**objective budgets with forecast and drift alerts**, and **learns your team's intent vocabulary** so
+classification gets smarter and nearly free. Every prompt is redacted on the developer's own machine,
+and management only ever sees privacy-preserving aggregates.
 
 > **What no other tool does:** objective-tied budget guardrails that warn the **developer** privately
-> while management sees only k-anonymized aggregates, across **every** coding tool. LLM gateways
-> enforce budgets by API key at your app boundary. Cursor/Copilot analytics are single-vendor and
-> manager-facing. Abenlux fuses cross-tool capture + value attribution + co-determination-grade
-> privacy. See [CRITIQUE.md](CRITIQUE.md) for the honest competitive analysis and limits.
+> while management sees only k-anonymized aggregates, with **purpose traceability** (net-new vs
+> maintenance) and a **self-learning local knowledge graph** — across **every** coding tool. See
+> [CRITIQUE.md](CRITIQUE.md) for the honest competitive analysis and limits.
 
 <div align="center">
 <img src="docs/dashboard-management.png" alt="Abenlux management dashboard" width="900">
-<br><em>Management view: spend → value, budgets with forecast, orphan spend, drift, all k-anonymized.</em>
+<br><em>Real captured data: spend → value, budgets with forecast, what the AI spend is for
+(net-new build vs maintenance), new initiatives, orphan spend, drift — all k-anonymized.</em>
 </div>
+
+---
+
+## Killer features
+
+| | |
+|---|---|
+| 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
+| 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**. Traced to the ticket. |
+| 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
+| 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
+| 🕸 **Developer-local knowledge graph** | Each developer owns a private, on-device graph of their objectives, tickets, purpose mix, tools, and self-learned vocabulary. View it anytime with `abenlux graph`. |
+| 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
+| 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
+| 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers, Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
+| 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. |
+| 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
+| 🪶 **Minimal, optional LLM** | When branch + patterns + learned vocabulary all miss, one tiny cached call (OpenAI / Azure / Claude / Gemini) with **extractive prompt compression** classifies intent for fractions of a cent. |
 
 ---
 
@@ -44,64 +64,89 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 121 tests
+make test             # 156 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
-objective by ticket join, pseudonymizes the actor, and prints the only thing that would ever persist:
-a content-free `DerivedRecord`.
+objective, classifies its purpose, pseudonymizes the actor, and prints the only thing that would ever
+persist: a content-free `DerivedRecord`.
 
-Want to see it with a real tool but spend zero tokens?
+Verify any real tool without spending tokens:
 
 ```bash
 abenlux mock                                   # protocol-correct fake upstream (terminal A)
 ABEN_ANTHROPIC_UPSTREAM=http://127.0.0.1:9111 abenlux gateway   # terminal B
 ANTHROPIC_BASE_URL=http://127.0.0.1:8088 <your tool>            # terminal C
-abenlux me                                     # your call shows up, privately
+abenlux me            # your call shows up, privately
+abenlux graph         # your personal on-device knowledge graph
 ```
 
 ---
 
-## How developers are informed — without opening anything
+## 👩‍💻 For developers: download and configure (separate from the management UI)
 
-The waste, correction, and collaboration signals reach the developer **where they already work**.
-The dashboard is optional. Four ambient channels, all private to the developer, none visible to
-management:
+A developer installs **one** thing — the edge agent — and never needs the dashboard. It runs locally,
+redacts on the device, and (in an org) forwards only content-free records to the collector.
 
-| Channel | What it is |
+```bash
+pipx install abenlux            # or: pip install abenlux
+
+# in an organization, point the edge agent at your collector (values from IT):
+export ABEN_COLLECTOR_URL=https://abenlux.mycorp.internal
+export ABEN_INGEST_TOKEN=<device token>
+export ABEN_HMAC_KEY=<org pseudonymization key>
+
+abenlux gateway                 # loopback capture agent on :8088
+abenlux onboard <tool>          # prints the exact env/config for YOUR tool + shell
+```
+
+Then point your tool at the agent (`abenlux onboard` gives the exact line):
+
+| Your tool | How |
 |---|---|
-| 🔔 **Desktop toast** | native OS notification fires the moment a nudge happens (Windows/macOS/Linux), debounced |
-| 📟 `abenlux watch` | live terminal tail of your private feed — keep it in a spare pane |
-| 📄 `abenlux me` | on-demand summary of your spend + recent nudges |
-| 🧩 feed file | `~/.abenlux/feed.jsonl` is the integration contract for an IDE status-bar/extension |
+| Claude Code, Codex, Gemini CLI | Tier 1 — export OTel to the agent (`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088`) |
+| aider, opencode, Crush, Pi, Droid, ForgeCode | `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` → `http://127.0.0.1:8088` |
+| Cline, Continue, Roo, Kilo (IDE) | set the provider Base URL in extension settings to the agent |
+| Cursor agent, Copilot inline | Tier 3 — captured via the vendor admin API on the collector (no local content) |
 
+Everything the developer sees is **private to them**, never the management plane:
+
+```bash
+abenlux me        # your spend + waste/collab nudges
+abenlux watch     # live ambient tail in a spare terminal pane
+abenlux graph     # your local knowledge graph: objectives, tickets, purpose, learned vocabulary
 ```
-[retry]   (aider)       This looks close to your last try. Add a failing test instead of re-running.
-[budget]  (claude-code) The Acme - Checkout Platform AI budget is 96% spent and on track for ~190%.
-[collab]  (cline)       A colleague is on 'Temporal saga for the checkout approval workflow'. Intro?
+
+Native desktop toasts fire automatically when a nudge happens. Full per-tool/per-OS guide:
+**[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+### Make it ultra-smart (optional, almost free)
+
+Point Abenlux at whatever LLM your org already uses to classify intent on the rare prompts that branch
+and keyword patterns miss. It uses a cheap model, a 5-token reply, extractive compression of long
+prompts, and a cache — fractions of a cent at org scale — and it *teaches the free layer* so it fires
+less over time. Standard env names work out of the box:
+
+```bash
+# OpenAI / Azure OpenAI / Anthropic / Gemini — pick one
+export LLM_PROVIDER=azure
+export AZURE_OPENAI_API_BASE=...   AZURE_OPENAI_API_KEY=...   AZURE_OPENAI_DEPLOYMENT_FAST=gpt-4o
 ```
 
 ---
 
-## Two things to install (and why the split matters)
+## 🏢 For IT: install the collector + dashboard
 
-A *central* gateway would see every developer's raw prompt before redaction. So Abenlux splits:
-
-```
- developer's machine                                  IT-managed central host
- ───────────────────                                  ───────────────────────
- tool ──base_url──▶ Abenlux edge agent                Abenlux collector + API + dashboard
-                    (abenlux gateway, loopback)       (abenlux serve)
-                    redact → derive → pseudonymize     receives ONLY content-free DerivedRecords
-                    full prompt exists ONLY here  ───▶ RBAC: managers see k-anon aggregates,
-                    private feed stays here too        no individual rows, ever
+```bash
+ABEN_HMAC_KEY=<org key> ABEN_DB=<sqlite or postgres dsn> ABEN_KG=knowledge_graph.yaml \
+ABEN_PRINCIPALS=principals.yaml ABEN_INGEST_TOKEN=<device token> \
+abenlux serve --host 0.0.0.0 --port 8090
 ```
 
-- **Developers** run `pip install abenlux` + `abenlux gateway`, then `abenlux onboard <tool>` prints
-  the exact one-liner for their tool on their OS/shell.
-- **IT** runs `abenlux serve` (the collector + dashboard) behind TLS/SSO.
-
-Full guide, per-tool and per-OS: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Open `http://<host>:8090/` and sign in. Managers/finance see the k-anonymized spend→value dashboard
+(budgets, purpose, new initiatives, drift, tool/model mix). Admins manage the knowledge graph. **No
+role can see an individual's rows.** A *central* gateway would see raw prompts before redaction — so
+the edge agent redacts on the device and forwards only the content-free `DerivedRecord`.
 
 ---
 
@@ -116,58 +161,45 @@ Full guide, per-tool and per-OS: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 | **3 — Vendor API** | prompt assembled server-side | Cursor agent, Copilot inline, Windsurf, Amazon Q | ❌ | metadata |
 
 **Tier 3 is a ceiling, not a bug.** Cursor and Copilot build the prompt on their own backend, so the
-real prompt never exists on the device. The only legitimate signal is the vendor's admin API (usage,
-no content). Abenlux is built around that limit instead of pretending it away.
+real prompt never exists on the device. The only legitimate signal is the vendor's admin API.
 
 ---
 
-## What you get
+## How the intelligence works
 
-- **Spend → value, by join.** `feature/ACME-1234` → objective via your knowledge graph. No ML, fully
-  auditable. Repo-join and a confidence-gated semantic fallback follow. Everything unmatched is
-  **orphan spend**, the headline waste metric.
-- **A real cost model.** Current 2026 per-model rates, cache-aware, longest-prefix so a point release
-  inherits its family price. Unknown models are flagged `unpriced`, never silently zeroed.
-- **Budgets, forecast, guardrails.** Per-objective ceilings, run-rate projection to period end,
-  projected overrun, and a private developer nudge when their objective is over or at risk.
-- **Drift.** Window-over-window orphan-share and cost trend with alerts — the early warning before
-  the quarterly bill.
-- **Developer-private signals, tool-agnostic.** Retry loops, resent-history bloat, answered-already,
-  routing hints — identical whether the call came from Claude Code, aider, or a Cursor usage event.
-- **Collaboration, double-blind.** Live-duplication and solved-reuse matches, Chinese-wall and
-  residency enforced, identities revealed only on mutual consent. Never a manager-visible report.
-- **Governance as code.** RBAC where no role, not even admin, can see another individual's rows.
-  Managers get only k-anonymized, DP-noised aggregates.
+```
+purpose of spend  =  branch convention   (free, auditable: feature/ fix/ spike/ ...)
+                  →  keyword patterns + the device's self-learned vocabulary   (free)
+                  →  one tiny LLM call on an extractively-compressed prompt    (rare, cached, ~5 tokens)
+                  ↑
+                  every confident label feeds the learner, so the free layers get smarter over time
+```
 
----
-
-## The privacy posture *is* the pipeline order (run on the device)
+The privacy posture *is* the pipeline order, run **on the device**:
 
 ```
 capture (full content, in-flight only)
   → REDACT        destroy secrets/PII before anything is written or derived
-  → DERIVE        embedding + token facts + cost + waste signals  (vectors and counts, not text)
-  → ATTRIBUTE     join work-context → objective, semantic fallback, flag orphan spend
+  → DERIVE        embedding + token facts + cost + waste + purpose  (vectors and labels, not text)
+  → ATTRIBUTE     join work-context → objective, semantic fallback, flag orphan
   → PSEUDONYMIZE  one-way HMAC the actor, drop the raw id
   → PERSIST       the DerivedRecord only, raw content is discarded here
   → FORWARD       ship the content-free DerivedRecord to the central collector
 ```
 
-There is no central, management-readable store of anyone's prompts. That asset never exists. The
-separation is enforced by `auth/rbac.py` and by where the bytes physically live, not a feature toggle.
-Architecture and data flow: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+There is no central, management-readable store of anyone's prompts. That asset never exists. Details:
+**[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 
 ## Built for thousands of developers
 
-- **Storage:** SQLite (WAL) by default for zero config, **optional Postgres** for scale —
-  `pip install abenlux[postgres]` and point `ABEN_DB` at a `postgresql://` DSN.
-- **Forwarding:** the edge batches and spools derived records, retries on collector outage, and the
-  collector dedups by event id, so delivery is at-least-once and a collector blip never breaks a
-  developer's call.
-- **Privacy at scale:** k-anonymity (default k≥5) suppresses small groups, DP noise on org totals,
-  per-device ingest tokens, RBAC enforced server-side.
+- **Storage:** SQLite (WAL) by default, **optional Postgres** (`pip install abenlux[postgres]`, point
+  `ABEN_DB` at a `postgresql://` DSN). Schema self-migrates on open.
+- **Forwarding:** the edge batches + spools derived records, retries on collector outage, dedups by
+  event id — at-least-once delivery, and a collector blip never breaks a developer's call.
+- **Privacy at scale:** k-anonymity (k≥5) suppression, DP noise on org totals, per-device ingest
+  tokens, RBAC enforced server-side.
 - **Cross-platform:** Windows, macOS, Linux. CI runs the suite on all three across Python 3.10-3.13.
 
 ---
@@ -175,33 +207,28 @@ Architecture and data flow: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 ## Command reference
 
 ```
-abenlux demo              run the full edge pipeline offline
-abenlux gateway           start the edge capture agent (Tier-2 proxy + Tier-1 OTLP) on :8088
-abenlux serve             start the collector + API + dashboard on :8090
-abenlux onboard <tool>    print exact setup for a tool on your OS/shell
-abenlux tiers             the tool capability matrix
-abenlux cost <model>      price an interaction
-abenlux report            management spend→value report (k-anonymity gated)
-abenlux me                your own private spend + recent nudges
-abenlux watch             live ambient tail of your private signals
-abenlux detect            which AI tool the agent detects here
-abenlux mock              protocol-correct fake upstream for token-free verification
-abenlux sync-cursor       pull Tier-3 Cursor usage (metadata only)
+abenlux demo / gateway / serve / mock      run the pipeline / edge agent / collector / fake upstream
+abenlux onboard <tool>                     exact setup for a tool on your OS/shell
+abenlux tiers                              the tool capability matrix
+abenlux cost <model>                       price an interaction
+abenlux report                             management spend→value report (k-anonymity gated)
+abenlux me / watch                         your own private spend + nudges (summary / live tail)
+abenlux graph [--json]                     your developer-local knowledge graph
+abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor usage (metadata only)
 ```
 
 ---
 
 ## Testing
 
-121 unit + integration tests, plus a real-SDK end-to-end (the genuine Anthropic and OpenAI SDKs
-driven through a live gateway) and a Playwright browser test of every dashboard screen and role.
+156 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+Anthropic and OpenAI SDKs driven through a live gateway**, a self-learning loop test, and a Playwright
+browser test of every dashboard screen and role.
 
 ```bash
-make test       # 121 tests
+make test       # 156 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
-
----
 
 ## Docs
 

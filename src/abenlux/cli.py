@@ -235,6 +235,16 @@ def cmd_me(args) -> None:
         print(f"   [{e['kind']:<16}] ({tag}) {e['line']}{extra}")
 
 
+def cmd_graph(args) -> None:
+    # the developer's own on-device knowledge graph: objectives, tickets, purpose, learned vocabulary
+    from abenlux.developer.knowledge_graph import DevKnowledgeGraph
+    from abenlux.worktype_learn import WorkTypeLearner
+    store = open_store(SETTINGS.local_db)
+    g = DevKnowledgeGraph(store, WorkTypeLearner())
+    print(g.to_json() if args.json else g.render_text())
+    store.close()
+
+
 def cmd_watch(args) -> None:
     # live ambient tail of your private signal feed. keep it open in a spare terminal pane and
     # nudges appear as you work, no browser. desktop toasts fire automatically from the gateway.
@@ -316,6 +326,10 @@ def main() -> None:
     w = sub.add_parser("watch")
     w.add_argument("--all", action="store_true", help="print existing history before tailing")
     w.set_defaults(func=cmd_watch)
+
+    gr = sub.add_parser("graph")
+    gr.add_argument("--json", action="store_true")
+    gr.set_defaults(func=cmd_graph)
 
     args = p.parse_args()
     args.func(args)

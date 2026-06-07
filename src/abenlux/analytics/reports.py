@@ -77,9 +77,30 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         ps, pe, now = current_month_bounds()
         budgets = [b.to_dict() for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now)]
 
+    # WHAT the spend is for: purpose mix + net-new vs maintenance investment + new initiatives
+    from abenlux.attribution.attributor import MAINTENANCE, NET_NEW
+    by_work_type = _gate_rows(store.rollup("work_type"), gate)
+    investment = {"net_new": 0.0, "maintenance": 0.0, "unclassified": 0.0}
+    for r in store.rollup("work_type"):
+        lbl = r["label"]
+        cat = "net_new" if lbl in NET_NEW else ("maintenance" if lbl in MAINTENANCE else "unclassified")
+        investment[cat] += r["cost"]
+    investment = {k2: round(v, 2) for k2, v in investment.items()}
+    lo, hi = store.time_bounds()
+    since = (lo + hi) / 2 if hi > lo else lo
+    new_initiatives = []
+    for o in store.new_objectives(since):
+        new_initiatives.append({
+            "label": o["objective_label"], "work_type": o["work_type"], "actors": o["actors"],
+            "cost": round(o["cost"], 2) if gate.allows(o["actors"]) else None,  # k-gate the figure
+        })
+
     return {
         "trend": asdict(trend) if trend else None,
         "budgets": budgets,
+        "by_work_type": [r.__dict__ for r in by_work_type],
+        "investment": investment,
+        "new_initiatives": new_initiatives,
         "org_actors": org_actors,
         "total_events": totals["n"],
         "total_tokens": totals["tokens"],
@@ -105,5 +126,7 @@ def developer_report(store: DerivedStore, actor_pseudonym: str) -> dict:
         "cost_usd": round(s["cost"], 4),
         "retry_loops": s["retries"],
         "resent_history_tokens": s["dup_tokens"],
+        "work_type_mix": [{"label": r["label"], "cost": round(r["cost"], 4), "calls": r["calls"]}
+                          for r in store.actor_work_types(actor_pseudonym)],
         "note": "private to you, never visible to management",
     }

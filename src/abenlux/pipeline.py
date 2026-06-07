@@ -16,7 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from abenlux.attribution.attributor import KnowledgeGraph, attribute
+from abenlux.attribution.attributor import (
+    KnowledgeGraph,
+    attribute,
+    extract_ticket,
+    work_type_and_source,
+)
 from abenlux.pricing import cost_usd
 from abenlux.privacy.pseudonymize import strip_raw_actor_inplace
 from abenlux.processing.redact import redact_event_inplace
@@ -51,6 +56,8 @@ def process(
     waste_monitor: Optional[SessionWasteMonitor] = None,
     capture_embedding: bool = True,
     embed_fn=embed_stub,
+    work_type_classifier=None,
+    work_type_learner=None,
 ) -> PipelineResult:
     # 1. REDACT FIRST - before derive, before persist, before anything touches disk
     redactions = redact_event_inplace(event)
@@ -65,6 +72,17 @@ def process(
 
     # 4. ATTRIBUTE - join first, semantic fallback only if an embedding exists
     attr = attribute(event, kg, query_embedding=embedding)
+    # classify WHAT the spend is for. branch convention first, redacted-prompt pattern fallback.
+    # runs on the redacted text, only the label persists. ticket id is the trace handle.
+    ticket = event.work.ticket_id or extract_ticket(event.work.git_branch)  # always trace the ticket
+    prompt_text = event.input_text()
+    learned = work_type_learner.patterns() if work_type_learner is not None else None
+    work_type, wt_source = work_type_and_source(
+        event.work.git_branch, ticket, prompt_text, llm=work_type_classifier, learned=learned)
+    # self-learning: a confident label (branch ground-truth or the llm) teaches the cheap layer,
+    # so future similar prompts classify for free and the llm fires less over time
+    if work_type_learner is not None and wt_source in ("branch", "llm"):
+        work_type_learner.observe(prompt_text, work_type)
 
     # 5. PSEUDONYMIZE - one-way, drop raw actor
     strip_raw_actor_inplace(event, hmac_key)
@@ -109,6 +127,9 @@ def process(
         is_orphan=attr.is_orphan,
         attribution_method=attr.method,
         attribution_confidence=attr.confidence,
+        ticket_id=ticket,
+        work_type=work_type,
+        work_type_source=wt_source,
     )
 
     # raw content is dropped: clear bodies after derivation

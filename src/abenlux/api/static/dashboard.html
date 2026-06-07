@@ -94,6 +94,9 @@
       <div class="grid kpis" id="mgmtKpis"></div>
       <h2>Budgets <span class="hint">spend vs ceiling · run-rate forecast to period end</span></h2>
       <div class="card" id="budgets"></div>
+      <h2>What the AI spend is for <span class="hint">net-new build vs keeping the lights on · purpose from branch or prompt</span></h2>
+      <div class="card" id="investment"></div>
+      <div class="card" id="newInitiatives" style="margin-top:12px"></div>
       <h2>Spend by objective <span class="hint">attributed by join, not guess · k-anonymity gated</span></h2>
       <div class="card" id="byObjective"></div>
       <h2>Tool mix <span class="hint">spend per AI tool</span></h2>
@@ -106,6 +109,8 @@
     <!-- developer -->
     <div id="dev" class="hide">
       <div class="grid kpis" id="devKpis"></div>
+      <h2>Your work mix <span class="hint">what your AI spend is going toward</span></h2>
+      <div class="card" id="devWorkType"></div>
       <h2>Collaboration <span class="hint">double-blind · identities revealed only on mutual consent</span></h2>
       <div class="card" id="collab"></div>
       <div class="note">Live waste nudges stream privately to your IDE/CLI (<code>abenlux me</code>).
@@ -178,6 +183,37 @@ function budgetBars(budgets){
   }).join("");
 }
 
+function mixBars(rows){
+  if(!rows||!rows.length) return '<div class="muted">no data yet</div>';
+  const max = Math.max(1, ...rows.map(r=>r.cost));
+  return rows.map(r=>{const w=Math.max(2,Math.round(100*r.cost/max));
+    return `<div class="bar-row"><div class="bar-label">${r.label}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
+      <div class="bar-val">${fmtUSD(r.cost)} <span class="muted">· ${r.calls}</span></div></div>`;}).join("");
+}
+
+function investmentView(inv, byWork){
+  const tot = (inv.net_new+inv.maintenance+inv.unclassified)||1;
+  const pct = v=>Math.round(100*v/tot);
+  const seg = (v,c)=>`<div style="flex:${Math.max(v,0.0001)};background:${c};height:28px" title="${fmtUSD(v)}"></div>`;
+  const bar = `<div style="display:flex;border-radius:8px;overflow:hidden;border:1px solid var(--line)">
+    ${seg(inv.net_new,'var(--good)')}${seg(inv.maintenance,'var(--accent2)')}${seg(inv.unclassified,'var(--panel2)')}</div>`;
+  const legend = `<div class="muted" style="margin:8px 0 14px">
+    <span style="color:var(--good)">■</span> net-new build ${fmtUSD(inv.net_new)} (${pct(inv.net_new)}%) &nbsp;
+    <span style="color:var(--accent2)">■</span> maintenance ${fmtUSD(inv.maintenance)} (${pct(inv.maintenance)}%) &nbsp;
+    <span>■</span> unclassified ${fmtUSD(inv.unclassified)} (${pct(inv.unclassified)}%)</div>`;
+  return bar+legend+(bars(byWork.filter(r=>!r.suppressed), r=>r.cost, fmtUSD)||"");
+}
+
+function newInitiativesView(items){
+  if(!items||!items.length) return '<div class="muted">No new initiatives started this period.</div>';
+  return '<div style="font-weight:600;margin-bottom:8px">New this period</div>'+items.map(it=>{
+    const cost = it.cost==null ? '<span class="suppressed">spend hidden (&lt;k devs)</span>' : fmtUSD(it.cost);
+    return `<div class="feed-item"><div class="kind">${it.work_type||'work'}</div>
+      <div><b>${it.label}</b> started getting AI spend this period</div>
+      <div class="bar-val">${cost} <span class="muted">· ${it.actors}d</span></div></div>`;}).join("");
+}
+
 function driftBanner(trend){
   if(!trend) return "";
   const os = trend.orphan_share, c = trend.cost;
@@ -198,6 +234,8 @@ async function loadManagement(){
     kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling")+
     kpi("Total tokens", fmtN(rep.total_tokens), rep.unpriced_events? rep.unpriced_events+" unpriced":"all priced");
   $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
+  $("#investment").innerHTML = investmentView(rep.investment, rep.by_work_type||[]);
+  $("#newInitiatives").innerHTML = newInitiativesView(rep.new_initiatives);
   $("#byObjective").innerHTML = bars(rep.by_objective, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
   $("#byTool").innerHTML = bars(rep.by_tool, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
   $("#byModel").innerHTML = bars(rep.by_model, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
@@ -211,6 +249,7 @@ async function loadDeveloper(){
     kpi("Your AI spend", fmtUSD(me.cost_usd), `${fmtN(me.calls)} calls`)+
     kpi("Retry loops", fmtN(me.retry_loops), "near-identical re-prompts")+
     kpi("Resent-history tokens", fmtN(me.resent_history_tokens), "trim to cut input cost");
+  $("#devWorkType").innerHTML = mixBars(me.work_type_mix||[]);
   const ms = me.collaboration_matches||[];
   if(!ms.length){ $("#collab").innerHTML = '<div class="muted">No collaboration matches yet. When someone works on a similar problem, a double-blind suggestion appears here.</div>'; return; }
   $("#collab").innerHTML = ms.map(m=>{

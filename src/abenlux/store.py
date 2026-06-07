@@ -33,6 +33,7 @@ _COLUMNS = [
     "is_retry_loop", "retry_similarity",
     "objective_id", "objective_label", "is_orphan",
     "attribution_method", "attribution_confidence",
+    "ticket_id", "work_type", "work_type_source",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -49,13 +50,26 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           embedding TEXT, quality_score {real_type}, acceptance {real_type},
           is_retry_loop {int_type}, retry_similarity {real_type},
           objective_id TEXT, objective_label TEXT, is_orphan {int_type},
-          attribution_method TEXT, attribution_confidence {real_type}
+          attribution_method TEXT, attribution_confidence {real_type},
+          ticket_id TEXT, work_type TEXT, work_type_source TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
         "CREATE INDEX IF NOT EXISTS idx_tool ON derived(tool)",
         "CREATE INDEX IF NOT EXISTS idx_ts ON derived(ts)",
+        "CREATE INDEX IF NOT EXISTS idx_wt ON derived(work_type)",
     ]
+
+
+def _coltypes(int_type: str, real_type: str) -> dict:
+    # column -> sql type, used to add any missing columns when opening an older db
+    ints = {"input_tokens", "output_tokens", "duplicate_history_tokens", "cache_read_tokens",
+            "cache_creation_tokens", "tokens_estimated", "cost_priced", "is_retry_loop", "is_orphan"}
+    reals = {"ts", "cost_usd", "quality_score", "acceptance", "retry_similarity", "attribution_confidence"}
+    out = {}
+    for c in _COLUMNS:
+        out[c] = int_type if c in ints else (real_type if c in reals else "TEXT")
+    return out
 
 
 def _values(r: DerivedRecord) -> tuple:
@@ -69,6 +83,7 @@ def _values(r: DerivedRecord) -> tuple:
         int(r.is_retry_loop), r.retry_similarity,
         r.objective_id, r.objective_label, int(r.is_orphan),
         r.attribution_method, r.attribution_confidence,
+        r.ticket_id, r.work_type, r.work_type_source,
     )
 
 
@@ -121,7 +136,7 @@ class _BaseStore:
     def rollup(self, dimension: str) -> list[dict]:
         allowed = {
             "objective": "objective_label", "tool": "tool", "model": "request_model",
-            "provider": "provider", "tier": "tier",
+            "provider": "provider", "tier": "tier", "work_type": "work_type",
         }
         if dimension not in allowed:
             raise ValueError(f"unknown rollup dimension {dimension!r}")
@@ -131,6 +146,28 @@ class _BaseStore:
             "COALESCE(SUM(input_tokens+output_tokens),0) AS tokens, "
             "COALESCE(SUM(cost_usd),0) AS cost, COUNT(DISTINCT actor_pseudonym) AS actors "
             "FROM derived GROUP BY label ORDER BY cost DESC"
+        ))
+
+    def ticket_rollup(self) -> list[dict]:
+        # spend per ticket with its work type - the trace from dollars to the specific piece of work
+        return self._rows(self._exec(
+            "SELECT ticket_id, COALESCE(work_type,'?') AS work_type, COUNT(*) AS calls, "
+            "COALESCE(SUM(cost_usd),0) AS cost, COALESCE(objective_label,'') AS objective "
+            "FROM derived WHERE ticket_id IS NOT NULL "
+            "GROUP BY ticket_id, work_type, objective ORDER BY cost DESC"
+        ))
+
+    def new_objectives(self, since_ts: float) -> list[dict]:
+        """objectives whose FIRST-EVER activity is at/after since_ts - i.e. new things being built
+        this period. each row carries spend, devs, and the dominant work type, for traceability."""
+        return self._rows(self._exec(
+            "SELECT objective_id, objective_label, MIN(ts) AS first_ts, "
+            "COUNT(DISTINCT actor_pseudonym) AS actors, COALESCE(SUM(cost_usd),0) AS cost, "
+            "(SELECT work_type FROM derived d2 WHERE d2.objective_id=d.objective_id "
+            " AND work_type IS NOT NULL GROUP BY work_type ORDER BY SUM(cost_usd) DESC LIMIT 1) AS work_type "
+            "FROM derived d WHERE objective_id IS NOT NULL "
+            "GROUP BY objective_id, objective_label HAVING MIN(ts) >= ? ORDER BY cost DESC",
+            (since_ts,),
         ))
 
     def time_bounds(self) -> tuple[float, float]:
@@ -155,6 +192,14 @@ class _BaseStore:
         )
         return cur.fetchone()[0] or 0.0
 
+    def actor_work_types(self, actor_pseudonym: str) -> list[dict]:
+        # one developer's own purpose mix (feature/fix/...) for their private view
+        return self._rows(self._exec(
+            "SELECT COALESCE(work_type,'unknown') AS label, COALESCE(SUM(cost_usd),0) AS cost, "
+            "COUNT(*) AS calls FROM derived WHERE actor_pseudonym=? GROUP BY label ORDER BY cost DESC",
+            (actor_pseudonym,),
+        ))
+
     def actor_summary(self, actor_pseudonym: str) -> dict:
         """one developer's OWN view. private to them, never a management surface."""
         return self._row(self._exec(
@@ -164,6 +209,16 @@ class _BaseStore:
             "FROM derived WHERE actor_pseudonym=?",
             (actor_pseudonym,),
         ))
+
+    def _ensure_columns(self, coltypes: dict) -> None:
+        # add any columns missing from an older db, so opening it upgrades the schema in place
+        have = self._existing_columns()
+        for col, typ in coltypes.items():
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE derived ADD COLUMN {col} {typ}")
+
+    def _existing_columns(self) -> set:
+        raise NotImplementedError
 
     def close(self) -> None:
         self.conn.close()
@@ -180,9 +235,15 @@ class DerivedStore(_BaseStore):
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
-        for stmt in _ddl("REAL", "INTEGER", "REAL"):
+        stmts = _ddl("REAL", "INTEGER", "REAL")
+        self.conn.execute(stmts[0])                       # create table if absent
+        self._ensure_columns(_coltypes("INTEGER", "REAL"))  # add missing columns on older dbs
+        for stmt in stmts[1:]:                            # then the indexes
             self.conn.execute(stmt)
         self.conn.commit()
+
+    def _existing_columns(self) -> set:
+        return {r[1] for r in self.conn.execute("PRAGMA table_info(derived)").fetchall()}
 
     def insert(self, r: DerivedRecord) -> None:
         self._exec(
@@ -201,8 +262,16 @@ class PostgresDerivedStore(_BaseStore):
     def __init__(self, dsn: str):
         import psycopg
         self.conn = psycopg.connect(dsn, autocommit=True)
-        for stmt in _ddl("DOUBLE PRECISION", "BIGINT", "DOUBLE PRECISION"):
+        stmts = _ddl("DOUBLE PRECISION", "BIGINT", "DOUBLE PRECISION")
+        self.conn.execute(stmts[0])
+        self._ensure_columns(_coltypes("BIGINT", "DOUBLE PRECISION"))
+        for stmt in stmts[1:]:
             self.conn.execute(stmt)
+
+    def _existing_columns(self) -> set:
+        cur = self.conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='derived'")
+        return {r[0] for r in cur.fetchall()}
 
     def insert(self, r: DerivedRecord) -> None:
         cols = ",".join(_COLUMNS)

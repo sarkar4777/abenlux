@@ -102,6 +102,96 @@ def extract_ticket(branch: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# branch/commit-prefix conventions -> what the spend is FOR. a join on naming conventions, not a
+# guess about content. lets management see where AI investment flows: net-new build vs upkeep.
+_WORK_PREFIX = {
+    "feature": "feature", "feat": "feature", "feature-new": "feature", "new": "feature",
+    "fix": "fix", "bug": "fix", "bugfix": "fix", "hotfix": "fix", "patch": "fix",
+    "refactor": "refactor", "refac": "refactor", "cleanup": "refactor", "tidy": "refactor",
+    "perf": "perf", "optimize": "perf",
+    "chore": "chore", "build": "chore", "ci": "chore", "ops": "chore", "deps": "chore", "release": "chore",
+    "spike": "exploration", "poc": "exploration", "prototype": "exploration",
+    "experiment": "exploration", "explore": "exploration", "research": "exploration",
+    "docs": "docs", "doc": "docs",
+    "test": "test", "tests": "test", "qa": "test",
+}
+
+# net-new development vs keeping the lights on. the split management actually cares about.
+NET_NEW = {"feature", "exploration"}
+MAINTENANCE = {"fix", "refactor", "perf", "chore", "docs", "test"}
+
+
+# when there is no branch convention, infer purpose from the prompt. each pattern is weighted,
+# the highest-scoring work type above the floor wins. runs on the edge on REDACTED text and only
+# the resulting label persists, never the prompt. strong signals first.
+_PROMPT_SIGNALS = [
+    ("fix", r"\b(fix|bug|broken|failing test|stack ?trace|traceback|exception|error|crash|regression|doesn'?t work|not working|null pointer)\b", 3),
+    ("test", r"\b(unit tests?|integration tests?|write tests?|add tests?|test coverage|test cases?|pytest|jest|mock this)\b", 3),
+    ("docs", r"\b(document this|docstring|write (the )?readme|add comments?|explain (this|the) (code|function))\b", 3),
+    ("refactor", r"\b(refactor|clean ?up|rename|extract (a )?(method|function|class)|simplif|restructure|dedupe|tidy)\b", 3),
+    ("perf", r"\b(optimi[sz]e|too slow|performance|latency|speed (this|it) up|reduce (memory|allocations)|bottleneck)\b", 3),
+    ("exploration", r"\b(how (do|should) i|what(?:'s| is) the best|compare|trade-?offs?|options? for|prototype|proof of concept|poc|spike|evaluate|which (library|approach))\b", 2),
+    ("feature", r"\b(add|implement|build|create|scaffold|new (feature|endpoint|api|page|screen|component|service|app|module)|support for|wire up|integrate)\b", 2),
+]
+_PROMPT_PATTERNS = [(label, re.compile(rx, re.IGNORECASE), w) for label, rx, w in _PROMPT_SIGNALS]
+
+
+def classify_from_prompt(text: Optional[str], learned: Optional[dict] = None) -> str:
+    """infer work type from (already-redacted) prompt text. built-in patterns plus the device's
+    self-learned vocabulary (label -> set of terms). content-free output, label only."""
+    if not text:
+        return "unknown"
+    low = text.lower()
+    scores: dict[str, int] = {}
+    for label, pat, weight in _PROMPT_PATTERNS:
+        hits = len(pat.findall(text))
+        if hits:
+            scores[label] = scores.get(label, 0) + hits * weight
+    if learned:
+        for label, terms in learned.items():
+            for term in terms:
+                if term in low:
+                    scores[label] = scores.get(label, 0) + 2
+    if not scores:
+        return "unknown"
+    return max(scores.items(), key=lambda kv: kv[1])[0]
+
+
+def classify_work_type(branch: Optional[str], ticket_id: Optional[str] = None,
+                       prompt_text: Optional[str] = None) -> str:
+    """purpose of the spend. branch convention first (auditable), prompt-pattern fallback next."""
+    if branch:
+        head = re.split(r"[/_-]", branch.strip().lower(), maxsplit=1)[0]
+        wt = _WORK_PREFIX.get(head)
+        if wt:
+            return wt
+    return classify_from_prompt(prompt_text)
+
+
+def work_type_and_source(branch: Optional[str], ticket_id: Optional[str],
+                         prompt_text: Optional[str], llm=None, learned: Optional[dict] = None) -> tuple[str, str]:
+    """return (work_type, source) where source is 'branch' | 'prompt' | 'llm' | 'none'.
+    cascade: branch convention (auditable, free) -> keyword patterns + device-learned vocabulary
+    (free) -> one tiny cached llm call only if everything above failed. minimizes spend."""
+    if branch:
+        head = re.split(r"[/_-]", branch.strip().lower(), maxsplit=1)[0]
+        wt = _WORK_PREFIX.get(head)
+        if wt:
+            return wt, "branch"
+    wt = classify_from_prompt(prompt_text, learned)
+    if wt != "unknown":
+        return wt, "prompt"
+    if llm is not None and prompt_text:
+        smart = llm(prompt_text)
+        if smart:
+            return smart, "llm"
+    return "unknown", "none"
+
+
+def is_net_new(work_type: Optional[str]) -> bool:
+    return work_type in NET_NEW
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -130,8 +220,8 @@ def attribute(event, kg: KnowledgeGraph, *, query_embedding: Optional[list[float
             obj = kg.objectives[oid]
             return AttributionResult(oid, obj.label, "repo_join", False, 1.0)
 
-    # 3. semantic fallback - nearest objective by embedding, only above the floor. confidence
-    #    is the raw similarity so a weak match reads as low-confidence, never a clean join.
+    # semantic fallback - nearest objective by embedding, only above the floor. confidence
+    #is the raw similarity so a weak match reads as low-confidence, never a clean join.
     if query_embedding is not None:
         best: tuple[float, Objective] | None = None
         for obj in kg.objectives.values():
@@ -144,5 +234,5 @@ def attribute(event, kg: KnowledgeGraph, *, query_embedding: Optional[list[float
             sim, obj = best
             return AttributionResult(obj.id, obj.label, "semantic", False, round(sim, 3))
 
-    # 4. orphan
+    #orphan
     return AttributionResult(None, None, "none", True, 0.0)

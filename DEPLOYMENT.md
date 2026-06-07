@@ -80,10 +80,25 @@ The developer is informed **ambiently**, no browser required, all private to the
 # automatic: native desktop toast fires the moment a nudge happens (set ABEN_NOTIFY=0 to disable)
 abenlux watch     # live terminal tail of your private signals, keep it in a spare pane
 abenlux me        # on-demand: your own spend + retry/resent-history nudges + collaboration matches
+abenlux graph     # your developer-local knowledge graph: objectives, tickets, purpose, learned vocab
 ```
 
-These read a file under the developer's own home dir (`~/.abenlux/feed.jsonl`) and are **never**
-visible to management. That feed file is also the integration contract for an IDE status-bar/extension.
+These read files under the developer's own home dir (`~/.abenlux/`) and are **never** visible to
+management. The feed file is also the integration contract for an IDE status-bar/extension.
+
+### Optional: make intent classification ultra-smart (almost free)
+
+Abenlux labels what each call is for from the branch convention and free keyword patterns, learning
+your team's vocabulary over time. For the rare prompt both miss, point it at the LLM your org already
+uses — it sends a cheap model an extractively-compressed prompt and a 5-token reply, cached, so it
+costs fractions of a cent. Standard env names work, or the `ABEN_CLASSIFIER_*` ones.
+
+```
+LLM_PROVIDER=openai|azure|anthropic|google
+# openai:    OPENAI_API_KEY
+# azure:     AZURE_OPENAI_API_KEY + AZURE_OPENAI_API_BASE + AZURE_OPENAI_DEPLOYMENT_FAST + AZURE_OPENAI_API_VERSION
+# anthropic: ANTHROPIC_API_KEY      google: GEMINI_API_KEY
+```
 
 ### Verifying a tool is actually captured (no tokens spent)
 

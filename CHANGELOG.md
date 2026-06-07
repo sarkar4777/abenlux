@@ -20,6 +20,16 @@ First public release.
 - Objective budgets, run-rate forecast, and projected overrun.
 - Spend drift detection (orphan-share and cost trend, window over window).
 
+### Intelligence (what the spend is for)
+- Purpose/work-type classification: branch convention -> keyword patterns + self-learned vocabulary
+  -> a tiny optional LLM call. Net-new vs maintenance investment split and new-initiative detection.
+- Self-learning loop: confident labels (branch or LLM) teach the free keyword layer, persisted on
+  device and hot-reloaded, so the LLM fires less over time. No classification signal is wasted.
+- Developer-local knowledge graph (`abenlux graph`): objectives, tickets, purpose, tools, models,
+  and self-learned vocabulary, private and on-device.
+- Optional minimal LLM classifier for OpenAI / Azure OpenAI / Anthropic / Gemini, with extractive
+  prompt compression for long prompts and a cache, so cost is fractions of a cent at org scale.
+
 ### Developer experience
 - Tool-agnostic private signal feed: retry loops, context bloat, answered-already, routing hints.
 - Ambient delivery: native desktop toasts, `abenlux watch` live tail, `abenlux me` summary.

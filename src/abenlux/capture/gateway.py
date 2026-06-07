@@ -49,6 +49,8 @@ from abenlux.schema import Provider
 from abenlux.settings import SETTINGS
 from abenlux.sink import build_sink
 from abenlux.store import open_store
+from abenlux.worktype_learn import WorkTypeLearner
+from abenlux.worktype_llm import get_classifier
 
 _UPSTREAMS = {
     Provider.ANTHROPIC: SETTINGS.anthropic_upstream,
@@ -61,6 +63,9 @@ app = FastAPI(title="Abenlux Gateway", version="0.2.0")
 _store = open_store(SETTINGS.db_path)
 _sink = build_sink(SETTINGS, local_store=_store)  # local sqlite, or forward-to-collector if configured
 _embed = get_embedder()
+_classifier = get_classifier()    # optional, tiny LLM intent fallback. None unless configured.
+_learner = WorkTypeLearner()      # self-learning work-type memory, on-device, hot-reloaded
+_dev_store = open_store(SETTINGS.local_db)  # the developer's own rows -> their personal knowledge graph
 _kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path, embed_fn=_embed) if SETTINGS.kg_path else KnowledgeGraph()
 _history = SessionHistoryTracker()
 _feed = LocalSignalFeed()        # developer-private, on-device, never crosses to analytics
@@ -169,9 +174,10 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         )
         result = process(
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
-            waste_monitor=_monitor_for(actor), embed_fn=_embed,
+            waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
         )
-        _sink.insert(result.record)  # derived record ONLY - content already discarded (local or forwarded)
+        _sink.insert(result.record)  # forward to collector or write the shared store
+        _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
         _surface_to_developer(result, event)  # nudges + collab -> developer's private feed
     except Exception:
         pass
@@ -247,9 +253,10 @@ def _ingest_otlp(payload: dict) -> int:
         event.actor_raw = actor
         result = process(
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
-            waste_monitor=_monitor_for(actor), embed_fn=_embed,
+            waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
         )
         _sink.insert(result.record)
+        _dev_store.insert(result.record)
         _surface_to_developer(result, event)  # same private feed, regardless of tool/tier
         n += 1
     return n

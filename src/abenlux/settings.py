@@ -40,6 +40,17 @@ class Settings:
         return self.hmac_key.encode()
 
     @property
+    def local_db(self) -> str:
+        # the developer's own on-device store, the backing of their personal knowledge graph.
+        # defaults to ABEN_DB in solo mode, a private file when forwarding to a collector.
+        import os as _os
+        from pathlib import Path as _Path
+        env = _os.getenv("ABEN_LOCAL_DB")
+        if env:
+            return env
+        return str(_Path.home() / ".abenlux" / "local.db") if self.collector_url else self.db_path
+
+    @property
     def ingest_tokens(self) -> set[str]:
         toks = {self.ingest_token}
         toks.update(t.strip() for t in self.extra_ingest_tokens.split(",") if t.strip())

@@ -7,6 +7,7 @@ objectives:
   - {id: obj-umbrella,     label: "Umbrella - IT/OT convergence",            kind: client, client: umbrella,     monthly_budget_usd: 6000}
   - {id: obj-acme,     label: "Acme - Checkout Platform",           kind: client, client: acme, monthly_budget_usd: 5000}
   - {id: obj-globex,  label: "Globex - Agent Marketplace R&D",           kind: innovation,              monthly_budget_usd: 1500}
+  - {id: obj-zenith,  label: "Zenith - New Mobile App",                  kind: innovation,              monthly_budget_usd: 3000}
 
 repo_to_objective:
   acme-checkout: obj-acme
@@ -18,3 +19,4 @@ ticket_prefix_to_objective:
   UMB: obj-umbrella
   INI: obj-initech
   GLX: obj-globex
+  MOB: obj-zenith

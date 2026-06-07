@@ -1,0 +1,17 @@
+# Principal -> role mapping for the API/dashboard. In deployment this is replaced by SSO/OIDC:
+# the token becomes a verified JWT and the role comes from IdP group membership. The shape here
+# stays identical so the API does not change. `subject` is the raw identity; its HMAC pseudonym
+# (computed with ABEN_HMAC_KEY) is what links a person to their own captured rows.
+#
+# Roles and what they can see (enforced in auth/rbac.py, not just the UI):
+#   developer : ONLY their own spend, waste, and collaboration matches
+#   manager   : k-anonymized org aggregates (never an individual's rows) + their own view
+#   finance   : aggregates + cost export + their own view
+#   admin     : aggregates + knowledge-graph/principal management + their own view
+# No role — not even admin — can see another named individual's detail. That permission does
+# not exist by design.
+principals:
+  - {token: dev-token,   subject: dev@example.com,     display_name: "Dev Developer",  role: developer}
+  - {token: mgr-token,   subject: manager@example.com, display_name: "Morgan Manager", role: manager}
+  - {token: fin-token,   subject: finance@example.com, display_name: "Finn Finance",   role: finance}
+  - {token: admin-token, subject: admin@example.com,   display_name: "Avery Admin",    role: admin}

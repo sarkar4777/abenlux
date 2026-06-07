@@ -1,0 +1,30 @@
+services:
+  gateway:
+    build: .
+    command: abenlux gateway --port 8088
+    ports: ["8088:8088"]
+    environment:
+      - ABEN_HMAC_KEY=${ABEN_HMAC_KEY:-change-me}
+      - ABEN_DB=/data/abenlux.db
+      - ABEN_KG=/data/knowledge_graph.yaml
+    volumes: ["abenlux-data:/data"]
+  api:
+    build: .
+    command: abenlux serve --host 0.0.0.0 --port 8090
+    ports: ["8090:8090"]
+    environment:
+      - ABEN_HMAC_KEY=${ABEN_HMAC_KEY:-change-me}
+      - ABEN_DB=/data/abenlux.db
+      - ABEN_KG=/data/knowledge_graph.yaml
+      - ABEN_PRINCIPALS=/data/principals.yaml
+      - ABEN_MATCH_DB=/data/abenlux-matches.db
+    volumes: ["abenlux-data:/data"]
+    depends_on: [gateway]
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro"]
+    ports: ["4318:4318"]
+    depends_on: [gateway]
+volumes:
+  abenlux-data:

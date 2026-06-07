@@ -1,0 +1,38 @@
+[project]
+name = "abenlux"
+version = "0.2.0"
+description = "Abenlux - AI spend -> value attribution plane. Capture, normalize, attribute and govern AI token usage across IDE/CLI tools."
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "httpx>=0.27",
+  "pydantic-settings>=2.2",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+ml = ["sentence-transformers>=2.6"]       # optional semantic embeddings backend
+postgres = ["psycopg[binary]>=3.1"]       # optional central store for thousands of developers
+dev = ["pytest>=8.0", "ruff>=0.4", "anthropic>=0.40", "openai>=1.40"]
+
+[project.scripts]
+abenlux = "abenlux.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/abenlux"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/abenlux/api/static" = "abenlux/api/static"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110

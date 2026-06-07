@@ -1,0 +1,20 @@
+# The one-time "company knowledge graph": the mapping that turns work-context into an
+# objective by a join. Maintained as data, version-controlled, auditable.
+# monthly_budget_usd (optional) powers spend-vs-budget, run-rate forecast, and the developer's
+# private budget guardrail nudges. objectives without a budget are uncapped.
+objectives:
+  - {id: obj-initech, label: "Initech - Data platform & mktg automation", kind: client, client: initech, monthly_budget_usd: 4000}
+  - {id: obj-umbrella,     label: "Umbrella - IT/OT convergence",            kind: client, client: umbrella,     monthly_budget_usd: 6000}
+  - {id: obj-acme,     label: "Acme - Checkout Platform",           kind: client, client: acme, monthly_budget_usd: 5000}
+  - {id: obj-globex,  label: "Globex - Agent Marketplace R&D",           kind: innovation,              monthly_budget_usd: 1500}
+
+repo_to_objective:
+  acme-checkout: obj-acme
+  globex-runtime: obj-globex
+  umbrella-iot: obj-umbrella
+
+ticket_prefix_to_objective:
+  ACME: obj-acme
+  UMB: obj-umbrella
+  INI: obj-initech
+  GLX: obj-globex

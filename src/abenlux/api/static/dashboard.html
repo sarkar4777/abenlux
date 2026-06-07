@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Abenlux - AI spend → value</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#141a24; --panel2:#1b2330; --line:#26303f;
+    --ink:#e6edf3; --muted:#8b98a9; --accent:#5eead4; --accent2:#7c9cff;
+    --warn:#f5a97f; --bad:#ed8796; --good:#a6da95; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b0e14,#0c1119);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif}
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:16px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;
+    background:rgba(11,14,20,.85);backdrop-filter:blur(8px);z-index:5}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:700;letter-spacing:.3px}
+  .logo{width:26px;height:26px;border-radius:8px;background:
+    radial-gradient(circle at 30% 30%,var(--accent),var(--accent2));box-shadow:0 0 18px rgba(94,234,212,.45)}
+  .brand small{display:block;font-weight:500;color:var(--muted);letter-spacing:0}
+  .who{display:flex;align-items:center;gap:12px;color:var(--muted)}
+  .pill{padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;
+    color:var(--accent);text-transform:capitalize}
+  main{max-width:1180px;margin:0 auto;padding:24px}
+  .tabs{display:flex;gap:8px;margin-bottom:20px}
+  .tab{padding:8px 16px;border:1px solid var(--line);border-radius:999px;cursor:pointer;
+    color:var(--muted);background:var(--panel)}
+  .tab.active{color:var(--ink);border-color:var(--accent);background:var(--panel2)}
+  .grid{display:grid;gap:16px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .kpi .val{font-size:30px;font-weight:700;margin-top:6px}
+  .kpi .sub{color:var(--muted);font-size:12px;margin-top:4px}
+  h2{font-size:15px;margin:26px 0 12px;color:var(--ink);letter-spacing:.3px}
+  h2 .hint{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+  .bar-row{display:grid;grid-template-columns:200px 1fr 110px;align-items:center;gap:12px;margin:7px 0}
+  .bar-label{color:var(--ink);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar-track{background:var(--panel2);border-radius:8px;height:20px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,var(--accent2),var(--accent))}
+  .bar-val{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  .suppressed{color:var(--muted);font-style:italic}
+  .feed-item{display:grid;grid-template-columns:130px 1fr auto;gap:12px;align-items:start;
+    padding:10px 0;border-top:1px solid var(--line)}
+  .kind{font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px}
+  .kind.warn{color:var(--warn)} .kind.collab{color:var(--accent2)}
+  .save{color:var(--good);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .login{max-width:420px;margin:12vh auto;text-align:center}
+  .login input{width:100%;padding:12px 14px;margin:14px 0;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;color:var(--ink);font-size:15px}
+  button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--ink);
+    padding:9px 16px;border-radius:10px;font-size:13px}
+  button.primary{background:linear-gradient(90deg,var(--accent2),var(--accent));color:#06231e;
+    border:none;font-weight:700}
+  .muted{color:var(--muted)} .hide{display:none}
+  .note{color:var(--muted);font-size:12px;margin-top:8px}
+  .err{color:var(--bad);margin-top:10px;min-height:18px}
+  .consent{font-size:12px;padding:5px 10px}
+  table{width:100%;border-collapse:collapse} td,th{padding:7px 6px;text-align:left}
+  th{color:var(--muted);font-weight:500;font-size:12px;border-bottom:1px solid var(--line)}
+  td{border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo"></div>
+    <div>Abenlux<small>AI spend → value attribution</small></div></div>
+  <div class="who" id="who"></div>
+</header>
+
+<main>
+  <!-- login -->
+  <section id="login" class="login">
+    <div class="card">
+      <h2 style="margin:0 0 4px">Sign in</h2>
+      <div class="muted">Enter your access token. Roles decide what you can see.</div>
+      <input id="token" type="password" placeholder="access token" autocomplete="off" />
+      <button class="primary" style="width:100%" onclick="signIn()">Continue</button>
+      <div class="err" id="loginErr"></div>
+      <div class="note">Dev tokens: <code>dev-token</code> · <code>mgr-token</code> ·
+        <code>fin-token</code> · <code>admin-token</code></div>
+    </div>
+  </section>
+
+  <!-- app -->
+  <section id="app" class="hide">
+    <div class="tabs" id="tabs"></div>
+
+    <!-- management -->
+    <div id="mgmt" class="hide">
+      <div id="driftBanner"></div>
+      <div class="grid kpis" id="mgmtKpis"></div>
+      <h2>Budgets <span class="hint">spend vs ceiling · run-rate forecast to period end</span></h2>
+      <div class="card" id="budgets"></div>
+      <h2>Spend by objective <span class="hint">attributed by join, not guess · k-anonymity gated</span></h2>
+      <div class="card" id="byObjective"></div>
+      <h2>Tool mix <span class="hint">spend per AI tool</span></h2>
+      <div class="card" id="byTool"></div>
+      <h2>Model mix</h2>
+      <div class="card" id="byModel"></div>
+      <div class="note" id="privacyNote"></div>
+    </div>
+
+    <!-- developer -->
+    <div id="dev" class="hide">
+      <div class="grid kpis" id="devKpis"></div>
+      <h2>Collaboration <span class="hint">double-blind · identities revealed only on mutual consent</span></h2>
+      <div class="card" id="collab"></div>
+      <div class="note">Live waste nudges stream privately to your IDE/CLI (<code>abenlux me</code>).
+        This view shows only your own data - never visible to management.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let TOKEN = localStorage.getItem("aben_token") || "";
+let ME = null;
+
+const fmtUSD = n => "$" + (n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtN = n => (n||0).toLocaleString();
+
+async function api(path){
+  const r = await fetch(path, {headers:{Authorization:"Bearer "+TOKEN}});
+  if(r.status===401){ signOut(); throw new Error("unauthorized"); }
+  if(!r.ok){ throw new Error((await r.json().catch(()=>({}))).detail || r.statusText); }
+  return r.json();
+}
+async function post(path){
+  const r = await fetch(path,{method:"POST",headers:{Authorization:"Bearer "+TOKEN}});
+  return r.json();
+}
+
+function signOut(){ localStorage.removeItem("aben_token"); TOKEN=""; ME=null;
+  $("#app").classList.add("hide"); $("#login").classList.remove("hide"); $("#who").innerHTML=""; }
+
+async function signIn(){
+  TOKEN = $("#token").value.trim();
+  try{
+    ME = await api("/api/whoami");
+    localStorage.setItem("aben_token", TOKEN);
+    boot();
+  }catch(e){ $("#loginErr").textContent = "Invalid token."; }
+}
+
+function kpi(label,val,sub){ return `<div class="card kpi"><div class="label">${label}</div>
+  <div class="val">${val}</div><div class="sub">${sub||""}</div></div>`; }
+
+function bars(rows, valueOf, fmt){
+  const max = Math.max(1, ...rows.map(r=>r.suppressed?0:valueOf(r)));
+  return rows.map(r=>{
+    if(r.suppressed) return `<div class="bar-row"><div class="bar-label">${r.label}</div>
+      <div class="suppressed">suppressed - fewer than k developers</div><div></div></div>`;
+    const v = valueOf(r), w = Math.max(2, Math.round(100*v/max));
+    return `<div class="bar-row"><div class="bar-label" title="${r.label}">${r.label}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
+      <div class="bar-val">${fmt(v)} <span class="muted">· ${r.actors}d</span></div></div>`;
+  }).join("");
+}
+
+function budgetBars(budgets){
+  if(!budgets || !budgets.length) return "";
+  const color = {ok:"var(--good)", at_risk:"var(--warn)", over:"var(--bad)"};
+  return budgets.map(b=>{
+    const w = Math.max(2, Math.min(100, Math.round(b.pct*100)));
+    const fw = Math.max(0, Math.min(100, Math.round((b.forecast_usd/b.budget_usd)*100)));
+    const tag = {ok:"on track", at_risk:"AT RISK", over:"OVER BUDGET"}[b.status];
+    return `<div class="bar-row" style="grid-template-columns:220px 1fr 150px">
+      <div class="bar-label" title="${b.label}">${b.label}</div>
+      <div class="bar-track" style="position:relative">
+        <div class="bar-fill" style="width:${w}%;background:${color[b.status]}"></div>
+        <div style="position:absolute;top:-2px;left:${fw}%;height:24px;border-left:2px dashed var(--ink);opacity:.5" title="forecast"></div>
+      </div>
+      <div class="bar-val">${fmtUSD(b.spent_usd)}/${fmtUSD(b.budget_usd)}
+        <span style="color:${color[b.status]}">· ${tag}</span></div></div>`;
+  }).join("");
+}
+
+function driftBanner(trend){
+  if(!trend) return "";
+  const os = trend.orphan_share, c = trend.cost;
+  if(!os.alert && !c.alert) return "";
+  const bits = [];
+  if(os.alert) bits.push(`unattributed spend ${os.direction} ${(os.prior*100).toFixed(0)}%→${(os.recent*100).toFixed(0)}%`);
+  if(c.alert) bits.push(`cost ${c.direction} ${fmtUSD(c.prior)}→${fmtUSD(c.recent)} window-over-window`);
+  return `<div class="card" style="border-color:var(--warn);color:var(--warn);margin-bottom:16px">⚠ Spend drift - ${bits.join(" · ")}</div>`;
+}
+
+async function loadManagement(){
+  const rep = await api("/api/report");
+  const band = rep.recoverable_resent_history_usd;
+  $("#driftBanner").innerHTML = driftBanner(rep.trend);
+  $("#mgmtKpis").innerHTML =
+    kpi("Total AI spend", fmtUSD(rep.total_cost_usd), `${fmtN(rep.total_events)} calls · ${rep.org_actors} developers`)+
+    kpi("Orphan spend", (rep.orphan_token_share*100).toFixed(1)+"%", "unattributed - the headline waste metric")+
+    kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling")+
+    kpi("Total tokens", fmtN(rep.total_tokens), rep.unpriced_events? rep.unpriced_events+" unpriced":"all priced");
+  $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
+  $("#byObjective").innerHTML = bars(rep.by_objective, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
+  $("#byTool").innerHTML = bars(rep.by_tool, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
+  $("#byModel").innerHTML = bars(rep.by_model, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
+  $("#privacyNote").textContent =
+    `Privacy: groups with fewer than k=${rep.privacy.k} developers are suppressed; cross-team totals carry differential-privacy noise. No individual rows exist on this plane.`;
+}
+
+async function loadDeveloper(){
+  const me = await api("/api/me");
+  $("#devKpis").innerHTML =
+    kpi("Your AI spend", fmtUSD(me.cost_usd), `${fmtN(me.calls)} calls`)+
+    kpi("Retry loops", fmtN(me.retry_loops), "near-identical re-prompts")+
+    kpi("Resent-history tokens", fmtN(me.resent_history_tokens), "trim to cut input cost");
+  const ms = me.collaboration_matches||[];
+  if(!ms.length){ $("#collab").innerHTML = '<div class="muted">No collaboration matches yet. When someone works on a similar problem, a double-blind suggestion appears here.</div>'; return; }
+  $("#collab").innerHTML = ms.map(m=>{
+    const who = m.peer_revealed ? `<b>${m.peer_revealed}</b>` : "a colleague (hidden)";
+    const verb = m.mode==="solved_reuse" ? "already solved something close to" : "is working on";
+    return `<div class="feed-item"><div class="kind collab">${m.mode.replace("_"," ")}</div>
+      <div>${who} ${verb} <b>${m.topic}</b> <span class="muted">· similarity ${m.similarity}</span></div>
+      <div>${m.peer_revealed ? '<span class="save">intro made</span>' :
+        `<button class="consent" onclick="consent(${m.id})">Request intro</button>`}</div></div>`;
+  }).join("");
+}
+
+async function consent(id){ await post(`/api/collab/${id}/consent`); loadDeveloper(); }
+
+let TAB = "dev";
+function renderTabs(){
+  const canAgg = ME.permissions.includes("view_aggregates");
+  const tabs = [];
+  if(canAgg) tabs.push(["mgmt","Management"]);
+  tabs.push(["dev","My view"]);
+  if(!canAgg) TAB="dev";
+  $("#tabs").innerHTML = tabs.map(([k,l])=>`<div class="tab ${k===TAB?'active':''}" onclick="switchTab('${k}')">${l}</div>`).join("");
+  $("#mgmt").classList.toggle("hide", TAB!=="mgmt");
+  $("#dev").classList.toggle("hide", TAB!=="dev");
+}
+function switchTab(k){ TAB=k; renderTabs(); if(k==="mgmt") loadManagement(); else loadDeveloper(); }
+
+async function boot(){
+  $("#login").classList.add("hide"); $("#app").classList.remove("hide");
+  $("#who").innerHTML = `<span>${ME.name}</span><span class="pill">${ME.role}</span>
+    <button onclick="signOut()">Sign out</button>`;
+  TAB = ME.permissions.includes("view_aggregates") ? "mgmt" : "dev";
+  renderTabs();
+  if(TAB==="mgmt") loadManagement(); else loadDeveloper();
+}
+
+if(TOKEN){ api("/api/whoami").then(d=>{ME=d;boot();}).catch(()=>signOut()); }
+</script>
+</body>
+</html>

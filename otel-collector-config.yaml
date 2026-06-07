@@ -1,0 +1,36 @@
+# OTel Collector config for Tier-1 ingest. Tools (Claude Code, Codex, Gemini CLI) export
+# OTLP/HTTP here; we forward to Abenlux's ingest endpoint after edge redaction. The collector
+# handles both traces (spans) and logs (Claude Code emits message content as log records).
+receivers:
+  otlp:
+    protocols:
+      http: { endpoint: 0.0.0.0:4318 }
+processors:
+  # first-line redaction of obvious secrets BEFORE they leave the device. this is belt-and-
+  # suspenders: abenlux re-redacts at ingest with entropy + a full pattern set, but stripping
+  # here means a misconfigured collector backend never even buffers a raw key.
+  transform:
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["gen_ai.input.messages"], "sk-[A-Za-z0-9_-]{20,}", "<REDACTED>")
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(body.string, "sk-[A-Za-z0-9_-]{20,}", "<REDACTED>")
+  batch: {}
+exporters:
+  otlphttp/abenlux:
+    # exporter appends /v1/traces and /v1/logs to this base; the gateway serves both.
+    endpoint: http://127.0.0.1:8088
+    encoding: json   # abenlux ingest parses OTLP/JSON; keeps it protobuf-dep-free
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform, batch]
+      exporters: [otlphttp/abenlux]
+    logs:
+      receivers: [otlp]
+      processors: [transform, batch]
+      exporters: [otlphttp/abenlux]

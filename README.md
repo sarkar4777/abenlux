@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-170%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-178%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -35,6 +35,29 @@ and management only ever sees privacy-preserving aggregates.
 <img src="docs/dashboard-management.png" alt="Abenlux management dashboard" width="900">
 <br><em>Real captured data: spend → value, budgets with forecast, what the AI spend is for
 (net-new build vs maintenance), new initiatives, orphan spend, drift — all k-anonymized.</em>
+</div>
+
+### It is a terminal-first tool. Here is real output, captured from a live multi-user run.
+
+> Everything below was produced by an actual run: a mock upstream, a central collector, and
+> gateways forwarding **8 developers across 3 tools and 4 objectives** through the full pipeline.
+> No data was seeded. Reproduce it yourself in two terminals from the [Quickstart](#quickstart-60-seconds-no-api-keys).
+
+<div align="center">
+<img src="docs/cli-report.png" alt="abenlux report" width="860">
+<br><em><code>abenlux report</code> — the k-anonymity-gated management view. Spend by objective and tool,
+purpose split (net-new vs maintenance), budgets with run-rate forecast (OVER / AT-RISK / ok), and
+orphan spend. Objectives and tools under k=3 developers are suppressed, not shown.</em>
+<br><br>
+<img src="docs/cli-me.png" alt="abenlux me" width="780">
+<br><em><code>abenlux me</code> — a developer's own private view. Their spend, work mix, and the
+mechanical-waste nudges (retry loop, resent history, small-model routing). Never visible to management.</em>
+<br><br>
+<img src="docs/cli-graph.png" alt="abenlux graph" width="560">
+<img src="docs/cli-collab.png" alt="abenlux collab" width="560">
+<br><em><code>abenlux graph</code> (left) is the developer's on-device knowledge graph of objectives,
+tickets, and purpose. <code>abenlux collab</code> (right) is a real double-blind match after a mutual
+intro: the peer's chosen contact handles are revealed only once both sides opt in.</em>
 </div>
 
 ---
@@ -64,7 +87,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 170 tests
+make test             # 178 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -285,12 +308,12 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-170 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+178 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic and OpenAI SDKs driven through a live gateway**, a self-learning loop test, and a Playwright
 browser test of every dashboard screen and role.
 
 ```bash
-make test       # 170 tests
+make test       # 178 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

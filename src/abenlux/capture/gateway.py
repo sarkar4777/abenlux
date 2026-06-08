@@ -162,13 +162,35 @@ def _monitor_for(actor: str) -> SessionWasteMonitor:
     return mon
 
 
-def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, latency: float) -> None:
+def _work_overrides(headers) -> dict:
+    # a tool wrapper / desktop agent can tag each call with work-context via X-Aben-* headers,
+    # so one agent can attribute calls from different workspaces without restarting.
+    g = headers.get
+    return {k: v for k, v in {
+        "actor": g("x-aben-actor"), "repo": g("x-aben-repo"),
+        "branch": g("x-aben-branch"), "ticket": g("x-aben-ticket"), "tool": g("x-aben-tool"),
+    }.items() if v}
+
+
+def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, latency: float,
+             overrides: dict | None = None) -> None:
     """run a completed exchange through the edge pipeline. never raises into the request path."""
     try:
+        from abenlux.attribution.attributor import extract_ticket
         event = build_event(provider=provider, request_body=req_json, response_raw=raw, streamed=streamed)
         event.latency_ms = latency
         event.work = current_work_context()
-        actor = current_actor()
+        overrides = overrides or {}
+        if overrides.get("repo"):
+            event.work.repo = overrides["repo"]
+        if overrides.get("tool"):
+            event.work.tool = overrides["tool"]
+        if overrides.get("branch"):
+            event.work.git_branch = overrides["branch"]
+            event.work.ticket_id = overrides.get("ticket") or extract_ticket(overrides["branch"])
+        elif overrides.get("ticket"):
+            event.work.ticket_id = overrides["ticket"]
+        actor = overrides.get("actor") or current_actor()
         event.actor_raw = actor
         # resent-history bloat: diff this request's messages against the actor's last request
         event.duplicate_history_tokens = _history.duplicate_history_tokens(
@@ -192,6 +214,7 @@ async def _proxy(request: Request, provider: Provider, path: str) -> Response:
     except (json.JSONDecodeError, ValueError):
         req_json = {}
     streamed = bool(req_json.get("stream"))
+    overrides = _work_overrides(request.headers)
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     url = f"{_UPSTREAMS[provider]}{path}"
     if request.url.query:
@@ -216,7 +239,7 @@ async def _proxy(request: Request, provider: Provider, path: str) -> Response:
         # this is reliable (unlike a generator finally under ASGI) and keeps capture entirely
         # off the request's hot path - the developer never waits on it.
         latency = (time.perf_counter() - started) * 1000
-        _capture(provider, req_json, bytes(captured), streamed, latency)
+        _capture(provider, req_json, bytes(captured), streamed, latency, overrides)
 
     return StreamingResponse(
         tee(), status_code=upstream.status_code, headers=resp_headers,

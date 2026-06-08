@@ -78,7 +78,7 @@ def test_real_anthropic_sdk_through_gateway(gateway_url):
         text = "".join(s.text_stream)
         final = s.get_final_message()
     assert "Temporal saga" in text                       # tool received the untouched stream
-    assert final.usage.input_tokens == 1820 and final.usage.output_tokens == 42
+    assert final.usage.input_tokens == 1820 and final.usage.output_tokens == 1820 // 8
 
     time.sleep(1.0)  # let the gateway's BackgroundTask capture complete
     raw = open(db, "rb").read()
@@ -98,4 +98,16 @@ def test_real_openai_sdk_through_gateway(gateway_url):
         if c.usage:
             usage = c.usage
     assert text == "Hello world"
-    assert usage.prompt_tokens == 12 and usage.completion_tokens == 5
+    assert usage.prompt_tokens == 1820 and usage.completion_tokens == 1820 // 8
+
+
+def test_mock_usage_honors_input_header(gateway_url):
+    # the gateway forwards X-Aben-Mock-Input so a fleet of real captures produces varied, realistic cost
+    url, _ = gateway_url
+    ac = anthropic.Anthropic(api_key="dummy", base_url=url,
+                             default_headers={"X-Aben-Mock-Input": "6400"})
+    with ac.messages.stream(model="claude-opus-4-8", max_tokens=64,
+                            messages=[{"role": "user", "content": "scaffold a new billing service"}]) as s:
+        "".join(s.text_stream)
+        final = s.get_final_message()
+    assert final.usage.input_tokens == 6400 and final.usage.output_tokens == 6400 // 8

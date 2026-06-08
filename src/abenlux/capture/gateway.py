@@ -85,7 +85,9 @@ def _toast(kind: str, line: str) -> None:
         notify(line)
 
 _BUDGET_TTL = 60.0
-_budget_state = {"snapshot": {}, "refreshed": 0.0}
+# refreshed starts far in the past so the FIRST snapshot always computes, regardless of the
+# perf_counter origin on a given platform (which is otherwise undefined and was flaky on macOS).
+_budget_state = {"snapshot": {}, "refreshed": -1e18}
 
 
 def _budget_snapshot() -> dict:

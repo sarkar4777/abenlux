@@ -155,7 +155,8 @@ def test_gateway_fires_private_budget_guardrail(tmp_path, monkeypatch):
     monkeypatch.setattr(gateway, "_kg", _kg(1000.0))
     monkeypatch.setattr(gateway, "_feed", feed)
     monkeypatch.setattr(gateway, "SETTINGS", SimpleNamespace(collector_url=None, ingest_token="t"))
-    monkeypatch.setattr(gateway, "_budget_state", {"snapshot": {}, "refreshed": 0.0})
+    # force a fresh snapshot regardless of the platform's perf_counter origin (was flaky on macOS)
+    monkeypatch.setattr(gateway, "_budget_state", {"snapshot": {}, "refreshed": -1e18})
 
     rec = DerivedRecord(
         event_id="cur", ts=now, tier="t", provider="anthropic", actor_pseudonym="pxme",

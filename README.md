@@ -100,14 +100,21 @@ abenlux gateway                 # loopback capture agent on :8088
 abenlux onboard <tool>          # prints the exact env/config for YOUR tool + shell
 ```
 
-Then point your tool at the agent (`abenlux onboard` gives the exact line):
+Then point your tool at the agent. **`abenlux onboard <tool> --shell <bash|powershell|cmd>` prints the
+exact copy-paste setup for your tool and OS.** Concretely:
 
-| Your tool | How |
+| Your tool | Exactly what to do (agent runs on `http://127.0.0.1:8088`) |
 |---|---|
-| Claude Code, Codex, Gemini CLI | Tier 1 — export OTel to the agent (`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088`) |
-| aider, opencode, Crush, Pi, Droid, ForgeCode | `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` → `http://127.0.0.1:8088` |
-| Cline, Continue, Roo, Kilo (IDE) | set the provider Base URL in extension settings to the agent |
-| Cursor agent, Copilot inline | Tier 3 — captured via the vendor admin API on the collector (no local content) |
+| **Claude Code** | `CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088 OTEL_EXPORTER_OTLP_PROTOCOL=http/json claude` |
+| **OpenAI Codex** | add to `~/.codex/config.toml`: `[otel]` / `exporter="otlp-http"` / `endpoint="http://127.0.0.1:8088"` / `protocol="json"`, then run `codex` |
+| **Gemini CLI** | `gemini --telemetry --telemetry-otlp-endpoint=http://127.0.0.1:8088` |
+| **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider` &nbsp;(OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`) |
+| **opencode · Crush · Pi · Droid · ForgeCode · Goose** | export `ANTHROPIC_BASE_URL=http://127.0.0.1:8088` (or `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`), then run the tool |
+| **Cline · Roo · Kilo** (VS Code) | in the extension's provider settings, set **Base URL** to `http://127.0.0.1:8088` |
+| **Continue** (VS Code) | in `~/.continue/config.json`, set the model's `apiBase` to `http://127.0.0.1:8088/v1` |
+| **Cursor agent · Copilot inline** | nothing on the device — these assemble the prompt server-side, so IT pulls usage via the vendor admin API (`abenlux sync-cursor`) |
+
+Confirm it's working: run a prompt in your tool, then `abenlux me` — your call appears, privately.
 
 Everything the developer sees is **private to them**, never the management plane:
 

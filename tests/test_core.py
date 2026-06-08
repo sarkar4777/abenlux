@@ -49,11 +49,33 @@ def test_retry_loop_detected_on_near_verbatim():
     assert any(s.kind == "retry_loop" for s in sigs)
 
 
-def test_context_bloat_detected():
+def test_resent_history_detected():
+    # a large UNCACHED resend fires the cache-inefficiency signal (enable caching, lossless).
+    # a smaller resend that is sub-threshold still surfaces as generic context_bloat.
     mon = SessionWasteMonitor()
     e = CanonicalEvent(messages=[Message("user", "small new question")],
                        usage=Usage(input_tokens=10000, output_tokens=50))
     e.duplicate_history_tokens = 9000
+    sigs = mon.observe(e)
+    assert any(s.kind == "cache_inefficiency" for s in sigs)
+    assert next(s for s in sigs if s.kind == "cache_inefficiency").recoverable_tokens == 9000
+
+
+def test_cached_resend_is_not_flagged():
+    # the SAME resend, but served from cache, is cheap - no nudge, because there is nothing to fix
+    mon = SessionWasteMonitor()
+    e = CanonicalEvent(messages=[Message("user", "small new question")],
+                       usage=Usage(input_tokens=1000, output_tokens=50, cache_read_tokens=9000))
+    e.duplicate_history_tokens = 9000
+    sigs = mon.observe(e)
+    assert not any(s.kind in ("cache_inefficiency", "context_bloat") for s in sigs)
+
+
+def test_context_bloat_detected():
+    mon = SessionWasteMonitor()
+    e = CanonicalEvent(messages=[Message("user", "small new question")],
+                       usage=Usage(input_tokens=3000, output_tokens=50))
+    e.duplicate_history_tokens = 1900  # >60% resent but below the cache-nudge floor
     sigs = mon.observe(e)
     assert any(s.kind == "context_bloat" for s in sigs)
 

@@ -43,7 +43,7 @@ from abenlux.developer.matches import MatchStore
 from abenlux.developer.notify import Debouncer, notify
 from abenlux.embedding import get_embedder
 from abenlux.pipeline import process
-from abenlux.pricing import cost_usd
+from abenlux.pricing import cache_recoverable_usd, cost_usd
 from abenlux.processing.waste import SessionWasteMonitor
 from abenlux.schema import Provider
 from abenlux.settings import SETTINGS
@@ -119,7 +119,12 @@ def _surface_to_developer(result, event) -> None:
     runs identically for gateway (Tier-2) and OTLP (Tier-1) captures."""
     tool = event.work.tool
     for s in result.waste_signals:
-        rec_usd = cost_usd(event.request_model, getattr(s, "recoverable_tokens", 0), 0).total
+        tokens = getattr(s, "recoverable_tokens", 0)
+        # resent-history signals save the input-vs-cache delta (lossless), avoidable calls save full cost
+        if s.kind in ("cache_inefficiency", "context_bloat"):
+            rec_usd = cache_recoverable_usd(event.request_model, tokens)
+        else:
+            rec_usd = cost_usd(event.request_model, tokens, 0).total
         _feed.append_waste(s, tool=tool, recoverable_usd=rec_usd)
         if s.severity == "warn":  # only nudge the dev for actionable waste, not info hints
             _toast(s.kind, s.suggestion or s.detail)
@@ -173,11 +178,12 @@ def _work_overrides(headers) -> dict:
 
 
 def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, latency: float,
-             overrides: dict | None = None) -> None:
+             overrides: dict | None = None, response_api: bool = False) -> None:
     """run a completed exchange through the edge pipeline. never raises into the request path."""
     try:
         from abenlux.attribution.attributor import extract_ticket
-        event = build_event(provider=provider, request_body=req_json, response_raw=raw, streamed=streamed)
+        event = build_event(provider=provider, request_body=req_json, response_raw=raw,
+                            streamed=streamed, response_api=response_api)
         event.latency_ms = latency
         event.work = current_work_context()
         overrides = overrides or {}
@@ -207,13 +213,18 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         pass
 
 
-async def _proxy(request: Request, provider: Provider, path: str, upstream: str | None = None) -> Response:
+async def _proxy(request: Request, provider: Provider, path: str, upstream: str | None = None,
+                 response_api: bool = False) -> Response:
     body = await request.body()
     try:
         req_json = json.loads(body) if body else {}
     except (json.JSONDecodeError, ValueError):
         req_json = {}
-    streamed = bool(req_json.get("stream"))
+    # streaming is a body flag for OpenAI/Anthropic, but Gemini signals it in the URL
+    # (:streamGenerateContent + ?alt=sse) with no body flag - detect both, or we would try to
+    # JSON-parse an SSE stream and silently drop the capture.
+    query = request.url.query or ""
+    streamed = bool(req_json.get("stream")) or "streamGenerateContent" in path or "alt=sse" in query
     overrides = _work_overrides(request.headers)
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     url = f"{upstream or _UPSTREAMS[provider]}{path}"
@@ -239,7 +250,7 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         # this is reliable (unlike a generator finally under ASGI) and keeps capture entirely
         # off the request's hot path - the developer never waits on it.
         latency = (time.perf_counter() - started) * 1000
-        _capture(provider, req_json, bytes(captured), streamed, latency, overrides)
+        _capture(provider, req_json, bytes(captured), streamed, latency, overrides, response_api)
 
     return StreamingResponse(
         tee(), status_code=upstream.status_code, headers=resp_headers,
@@ -256,6 +267,12 @@ async def anthropic_messages(request: Request):
 @app.post("/v1/chat/completions")
 async def openai_chat(request: Request):
     return await _proxy(request, Provider.OPENAI, "/v1/chat/completions")
+
+
+@app.post("/v1/responses")
+async def openai_responses(request: Request):
+    # the OpenAI Responses API - Codex and newer tools speak this instead of chat/completions
+    return await _proxy(request, Provider.OPENAI, "/v1/responses", response_api=True)
 
 
 @app.post("/openai/deployments/{deployment}/chat/completions")
@@ -278,18 +295,19 @@ async def gemini_generate(request: Request, model_path: str):
     # gemini's path encodes the model + method, e.g. gemini-3.5-flash:streamGenerateContent
     return await _proxy(request, Provider.GOOGLE, f"/v1beta/models/{model_path}")
 
-
-# ------------------------------------------------------------------ Tier-1 OTLP ingest ----
-# Two ways tools reach us: directly (OTEL_EXPORTER_OTLP_ENDPOINT -> /v1/traces, /v1/logs, the
-# OTLP/HTTP standard paths) or via an OTel Collector that forwards to /v1/otel. We accept both.
-# Bodies must be OTLP/JSON (set OTEL_EXPORTER_OTLP_PROTOCOL=http/json), a non-JSON (protobuf)
-# body is answered 200 with a hint rather than erroring, so a misconfigured exporter never
-# crashes a developer's tool.
 def _ingest_otlp(payload: dict) -> int:
     n = 0
     for event in events_from_otlp(payload):
-        event.work = current_work_context()
-        actor = current_actor()
+        # a tool that self-reports an actor (Claude Code sends a hashed user.id) wins, else fall
+        # back to the device's own actor. work-context (repo/branch) comes from the device env,
+        # since OTel telemetry does not carry git context.
+        tool_actor = event.actor_raw
+        work = current_work_context()
+        if event.work.tool:  # OTel parser already set the tool, keep it over the env default
+            work.tool = event.work.tool
+            work.app_category = event.work.app_category or work.app_category
+        event.work = work
+        actor = tool_actor or current_actor()
         event.actor_raw = actor
         result = process(
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
@@ -300,7 +318,6 @@ def _ingest_otlp(payload: dict) -> int:
         _surface_to_developer(result, event)  # same private feed, regardless of tool/tier
         n += 1
     return n
-
 
 async def _otel_route(request: Request) -> JSONResponse:
     body = await request.body()

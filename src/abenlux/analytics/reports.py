@@ -62,12 +62,18 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     noisy_cost = gate.noisy_count(totals["cost"], org_actors)
     orphan_share = store.orphan_token_share()
 
-    # recoverable resent-history, as a cost band (cache-read floor .. full-input ceiling).
-    # we approximate using the org blended rate implied by total cost / total tokens.
+    # recoverable resent-history, cache-AWARE. resent history that is already a cache hit is cheap
+    # and not recoverable, so we only count the prefix that was billed as fresh input
+    # (dup - cache_read). priced as a band: cache-read floor .. full-input ceiling.
     blended = (totals["cost"] / totals["tokens"]) if totals["tokens"] else 0.0
     dup = totals["dup_tokens"]
-    waste_floor = round(dup * blended * 0.1, 2)   # if fully cacheable
-    waste_ceiling = round(dup * blended, 2)        # if not cached at all
+    uncached_dup = max(0, dup - totals.get("cache_read", 0))
+    waste_floor = round(uncached_dup * blended * 0.1, 2)   # if made fully cacheable
+    waste_ceiling = round(uncached_dup * blended, 2)        # if it stays uncached
+    # cache-hit ratio: the share of resendable input already served from cache. high = efficient.
+    cache_read = totals.get("cache_read", 0)
+    cache_base = cache_read + totals.get("input_tokens", 0)
+    cache_hit_ratio = round(cache_read / cache_base, 4) if cache_base else 0.0
 
     trend = spend_trend(store)  # recent vs prior window, None if not enough history
 
@@ -108,6 +114,8 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         "total_cost_usd_dp": noisy_cost,             # None if org < k
         "orphan_token_share": round(orphan_share, 4),
         "unpriced_events": totals["unpriced"],
+        "cache_hit_ratio": cache_hit_ratio,
+        "cache_read_tokens": cache_read,
         "recoverable_resent_history_usd": {"floor": waste_floor, "ceiling": waste_ceiling},
         "by_objective": [r.__dict__ for r in by_objective],
         "by_tool": [r.__dict__ for r in by_tool],
@@ -119,6 +127,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
 def developer_report(store: DerivedStore, actor_pseudonym: str) -> dict:
     """one developer's private view. only the developer (by their own pseudonym) sees this."""
     s = store.actor_summary(actor_pseudonym)
+    cache_base = s.get("cache_read", 0) + s.get("input_tokens", 0)
     return {
         "actor_pseudonym": actor_pseudonym,
         "calls": s["calls"],
@@ -126,6 +135,9 @@ def developer_report(store: DerivedStore, actor_pseudonym: str) -> dict:
         "cost_usd": round(s["cost"], 4),
         "retry_loops": s["retries"],
         "resent_history_tokens": s["dup_tokens"],
+        "cache_read_tokens": s.get("cache_read", 0),
+        "cache_hit_ratio": round(s.get("cache_read", 0) / cache_base, 4) if cache_base else 0.0,
+        "uncached_resent_tokens": max(0, s["dup_tokens"] - s.get("cache_read", 0)),
         "work_type_mix": [{"label": r["label"], "cost": round(r["cost"], 4), "calls": r["calls"]}
                           for r in store.actor_work_types(actor_pseudonym)],
         "note": "private to you, never visible to management",

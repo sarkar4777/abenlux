@@ -194,8 +194,11 @@ def cmd_report(args) -> None:
           f"tokens:{rep['total_tokens']:,}  cost:${rep['total_cost_usd']:,.2f}")
     print(f" orphan token share : {rep['orphan_token_share']*100:.1f}%  "
           f"(unattributed AI spend - the headline waste metric)")
+    print(f" prompt-cache hit ratio : {rep['cache_hit_ratio']*100:.1f}%  "
+          f"(resent input served from cache - higher is cheaper)")
     band = rep["recoverable_resent_history_usd"]
-    print(f" recoverable resent-history : ${band['floor']:,.2f}-${band['ceiling']:,.2f}")
+    print(f" recoverable via caching : ${band['floor']:,.2f}-${band['ceiling']:,.2f}  "
+          f"(uncached resends, same context - zero detail loss)")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
     trend = rep.get("trend")
@@ -243,6 +246,8 @@ def cmd_me(args) -> None:
     print(f"== your private view ({actor}) ==")
     print(f" calls:{rep['calls']}  tokens:{rep['tokens']:,}  cost:${rep['cost_usd']:,.4f}")
     print(f" retry loops:{rep['retry_loops']}  resent-history tokens:{rep['resent_history_tokens']:,}")
+    print(f" cache hit ratio:{rep['cache_hit_ratio']*100:.0f}%  "
+          f"uncached resent:{rep['uncached_resent_tokens']:,} tokens (cache these, same context)")
     mix = rep.get("work_type_mix") or []
     if mix:
         print(" your work mix: " + "  ".join(f"{m['label']} ${m['cost']:,.2f}" for m in mix))

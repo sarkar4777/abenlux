@@ -175,7 +175,11 @@ def parse_openai_stream(raw: bytes | str) -> tuple[str, Usage, list[str], Option
                 finish.append(ch["finish_reason"])
         if ev.get("usage"):  # present only with stream_options.include_usage
             u = ev["usage"]
-            usage.input_tokens = u.get("prompt_tokens", 0)
+            cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
+            # OpenAI/Azure fold cached tokens INTO prompt_tokens. split them out so the cache
+            # discount applies, otherwise cached input is billed at the full rate (overstated).
+            usage.input_tokens = max(0, u.get("prompt_tokens", 0) - cached)
+            usage.cache_read_tokens = cached
             usage.output_tokens = u.get("completion_tokens", 0)
             had_usage = True
     return "".join(text_parts), usage, finish, model, had_usage
@@ -185,14 +189,92 @@ def parse_openai_response_body(body: dict) -> tuple[str, Usage, list[str], Optio
     choice = (body.get("choices") or [{}])[0]
     text = _openai_content(choice.get("message", {}).get("content", ""))
     u = body.get("usage", {})
-    usage = Usage(input_tokens=u.get("prompt_tokens", 0), output_tokens=u.get("completion_tokens", 0))
+    cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
+    # split cached tokens out of prompt_tokens so the cache discount applies (see stream parser)
+    usage = Usage(
+        input_tokens=max(0, u.get("prompt_tokens", 0) - cached),
+        output_tokens=u.get("completion_tokens", 0),
+        cache_read_tokens=cached,
+    )
     finish = [choice["finish_reason"]] if choice.get("finish_reason") else []
     return text, usage, finish, body.get("model")
 
 
-# --------------------------------------------------------------------------- #
-# Google Gemini (generativelanguage / Vertex generateContent)                  #
-# --------------------------------------------------------------------------- #
+# OpenAI Responses API (/v1/responses) - what Codex and newer tools speak 
+# A different shape from chat/completions: the request carries `input` (string or a list of
+# role/content items) + `instructions`, usage is `input_tokens`/`output_tokens` (cached tokens in
+# input_tokens_details), and streaming is SSE typed events ending in `response.completed`.
+def _responses_content(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return ""
+
+
+def parse_responses_request(body: dict) -> tuple[list[Message], Optional[str]]:
+    messages: list[Message] = []
+    if body.get("instructions"):
+        messages.append(Message(role="system", content=str(body["instructions"])))
+    inp = body.get("input")
+    if isinstance(inp, str):
+        messages.append(Message(role="user", content=inp))
+    elif isinstance(inp, list):
+        for m in inp:
+            if isinstance(m, dict):
+                messages.append(Message(role=m.get("role", "user"), content=_responses_content(m.get("content", ""))))
+    return messages, body.get("model")
+
+
+def _responses_usage(u: dict) -> Usage:
+    cached = (u.get("input_tokens_details") or {}).get("cached_tokens", 0) or 0
+    return Usage(
+        input_tokens=max(0, (u.get("input_tokens", 0) or 0) - cached),
+        output_tokens=u.get("output_tokens", 0) or 0,
+        cache_read_tokens=cached,
+    )
+
+
+def _responses_output_text(output) -> str:
+    text = []
+    for item in output or []:
+        if isinstance(item, dict) and item.get("type") == "message":
+            text.append(_responses_content(item.get("content", [])))
+    return "".join(text)
+
+
+def parse_responses_body(body: dict) -> tuple[str, Usage, list[str], Optional[str]]:
+    text = _responses_output_text(body.get("output"))
+    usage = _responses_usage(body.get("usage", {}))
+    finish = [body["status"]] if body.get("status") else []
+    return text, usage, finish, body.get("model")
+
+
+def parse_responses_stream(raw: bytes | str) -> tuple[str, Usage, list[str], Optional[str]]:
+    text_parts: list[str] = []
+    usage = Usage()
+    finish: list[str] = []
+    model: Optional[str] = None
+    for payload in iter_sse_data(raw):
+        try:
+            ev = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        etype = ev.get("type", "")
+        if etype == "response.output_text.delta":
+            text_parts.append(ev.get("delta", "") or "")
+        elif etype in ("response.completed", "response.incomplete", "response.failed"):
+            resp = ev.get("response", {})
+            model = resp.get("model", model)
+            if resp.get("usage"):
+                usage = _responses_usage(resp["usage"])
+            if resp.get("status"):
+                finish.append(resp["status"])
+            if not text_parts:  # some servers only emit the full text on completion
+                text_parts.append(_responses_output_text(resp.get("output")))
+    return "".join(text_parts), usage, finish, model
+
+# Google Gemini (generativelanguage / Vertex generateContent)                 
 # Gemini's wire shape is its own: requests carry `contents` (role + parts[].text),
 # usage lives in `usageMetadata` (promptTokenCount / candidatesTokenCount /
 # cachedContentTokenCount), and streaming is a JSON-array SSE of GenerateContentResponse
@@ -277,12 +359,19 @@ def build_event(
     response_raw: bytes | str,
     streamed: bool,
     tier: CaptureTier = CaptureTier.GATEWAY_INTERCEPT,
+    response_api: bool = False,
 ) -> CanonicalEvent:
     """Single entry point used by the gateway once it has the full request body and
     the (buffered) response. Picks the right adapter and produces normalized output."""
     ev = CanonicalEvent(provider=provider, tier=tier, streamed=streamed, content_captured=True)
 
-    if provider == Provider.ANTHROPIC:
+    if response_api:  # OpenAI Responses API (/v1/responses), used by Codex and newer tools
+        ev.messages, ev.request_model = parse_responses_request(request_body)
+        if streamed:
+            out, usage, finish, rmodel = parse_responses_stream(response_raw)
+        else:
+            out, usage, finish, rmodel = parse_responses_body(_as_json(response_raw))
+    elif provider == Provider.ANTHROPIC:
         ev.messages, ev.request_model = parse_anthropic_request(request_body)
         if streamed:
             out, usage, finish, rmodel = parse_anthropic_stream(response_raw)
@@ -309,6 +398,9 @@ def build_event(
     else:
         raise ValueError(f"no adapter for provider {provider}")
 
+    # backfill the request model from the response when the request body omitted it (Gemini puts the
+    # model in the URL path, not the body), so pricing has a model to match instead of falling to $0.
+    ev.request_model = ev.request_model or rmodel
     ev.response_model = rmodel or ev.request_model
     ev.usage = usage
     ev.finish_reasons = finish

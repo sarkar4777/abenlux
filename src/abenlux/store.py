@@ -128,6 +128,9 @@ class _BaseStore:
             "SELECT COUNT(*) n, COALESCE(SUM(input_tokens+output_tokens),0) tokens, "
             "COALESCE(SUM(cost_usd),0) cost, COUNT(DISTINCT actor_pseudonym) actors, "
             "COALESCE(SUM(duplicate_history_tokens),0) dup_tokens, "
+            "COALESCE(SUM(cache_read_tokens),0) cache_read, "
+            "COALESCE(SUM(cache_creation_tokens),0) cache_creation, "
+            "COALESCE(SUM(input_tokens),0) input_tokens, "
             "COALESCE(SUM(CASE WHEN is_retry_loop=1 THEN 1 ELSE 0 END),0) retries, "
             "COALESCE(SUM(CASE WHEN cost_priced=0 THEN 1 ELSE 0 END),0) unpriced "
             "FROM derived"
@@ -205,6 +208,7 @@ class _BaseStore:
         return self._row(self._exec(
             "SELECT COUNT(*) calls, COALESCE(SUM(input_tokens+output_tokens),0) tokens, "
             "COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(duplicate_history_tokens),0) dup_tokens, "
+            "COALESCE(SUM(cache_read_tokens),0) cache_read, COALESCE(SUM(input_tokens),0) input_tokens, "
             "COALESCE(SUM(CASE WHEN is_retry_loop=1 THEN 1 ELSE 0 END),0) retries "
             "FROM derived WHERE actor_pseudonym=?",
             (actor_pseudonym,),

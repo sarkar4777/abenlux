@@ -228,12 +228,12 @@ def test_all_waste_patterns_fire_in_one_session():
             seen.add(s.kind)
 
     observe("how do I configure the retry policy for the worker", answer="set it to 5")
-    observe("optimize the slow report query", inp=400_000, out=40_000, dup=300_000)  # context bloat
+    observe("optimize the slow report query", inp=400_000, out=40_000, dup=300_000)  # uncached resend
     observe("please fix the failing auth integration test now")
     observe("please fix the failing auth integration test now!!")                     # retry loop
     observe("how do I configure the retry policy for the worker again")               # answered already
     observe("rename one variable", inp=120, out=30)                                   # routing hint
-    assert {"retry_loop", "context_bloat", "answered_already", "routing_hint"} <= seen
+    assert {"retry_loop", "cache_inefficiency", "answered_already", "routing_hint"} <= seen
 
 
 # --------------------------------------------------------------------------- #

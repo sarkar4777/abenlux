@@ -64,6 +64,7 @@ class SessionWasteMonitor:
     similarity_fn: SimilarityFn = lexical_similarity
     cheap_model_token_ceiling: int = 350  # below this, a small model usually suffices
     max_history: int = 100               # bound memory + keep answered-already O(window), not O(session)
+    cache_min_resent: int = 2000         # only nudge on caching when the uncached resend is material
 
     _prompts: list[str] = field(default_factory=list)
     _answers: list[str] = field(default_factory=list)
@@ -94,10 +95,31 @@ class SessionWasteMonitor:
                 )
                 break
 
-        # 2. context bloat - resent unchanged history
-        if event.usage.input_tokens and event.duplicate_history_tokens:
-            ratio = event.duplicate_history_tokens / max(event.usage.input_tokens, 1)
-            if ratio >= self.context_bloat_ratio:
+        # 2. resent unchanged history. the RIGHT fix depends on whether it is being cached:
+        #    - cached already  -> nothing to do, the resend is cheap (cache read ~0.1x input)
+        #    - NOT cached      -> enable prompt caching: identical context, billed as a cache hit.
+        #      this is the only token-saving lever with zero loss of accuracy or detail, so we
+        #      prefer it over "trim your history" (which risks dropping context the model needed).
+        dup = event.duplicate_history_tokens
+        cache_read = getattr(event.usage, "cache_read_tokens", 0)
+        if event.usage.input_tokens and dup:
+            ratio = dup / max(event.usage.input_tokens, 1)
+            uncached_resent = max(0, dup - cache_read)
+            if uncached_resent >= self.cache_min_resent and cache_read < dup * 0.5:
+                signals.append(
+                    WasteSignal(
+                        kind="cache_inefficiency",
+                        severity="warn",
+                        detail=f"{uncached_resent:,} tokens of resent history are not being cached",
+                        suggestion=(
+                            "You're resending context that isn't being cached. Turning on prompt "
+                            "caching keeps the exact same context but bills it as a cache read - "
+                            "real savings with zero loss of detail."
+                        ),
+                        recoverable_tokens=uncached_resent,
+                    )
+                )
+            elif ratio >= self.context_bloat_ratio and cache_read < dup * 0.5:
                 signals.append(
                     WasteSignal(
                         kind="context_bloat",
@@ -105,9 +127,9 @@ class SessionWasteMonitor:
                         detail=f"{int(ratio*100)}% of input is resent, unchanged history",
                         suggestion=(
                             "A large chunk of this request is history you've sent before. "
-                            "Trimming or summarizing it would cut input cost with no quality loss."
+                            "Caching it (or trimming what the model no longer needs) cuts input cost."
                         ),
-                        recoverable_tokens=event.duplicate_history_tokens,
+                        recoverable_tokens=uncached_resent or dup,
                     )
                 )
 

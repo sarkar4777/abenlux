@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-179%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-188%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -19,7 +19,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 ---
 
 `aben` + *lux* — it puts light on where AI tokens go. Abenlux captures token usage from Claude Code,
-Codex, Gemini CLI, Cursor, Copilot, aider, Cline, Continue, opencode, Crush, Pi, Droid and more,
+Codex, Gemini CLI, Cursor, Copilot, aider, Cline, Continue, opencode, Crush, Droid and more,
 normalizes it to one schema, **attributes spend to a business objective by a join (not a guess)**,
 classifies **what the spend is for** (new feature vs bug fix vs refactor), prices it in dollars, runs
 **objective budgets with forecast and drift alerts**, and **learns your team's intent vocabulary** so
@@ -62,11 +62,12 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 
 ---
 
-## Killer features
+## What sets it apart
 
 | | |
 |---|---|
 | 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
+| ♻️ **Cache-aware savings** | Separates fresh input from cache reads/writes per call, reports a **prompt-cache hit ratio**, and flags resent context that *isn't* being cached — the one token-saving lever with **zero loss of detail**, because the exact same context is sent, just billed as a cache hit. |
 | 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**. Traced to the ticket. |
 | 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
 | 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
@@ -87,7 +88,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 179 tests
+make test             # 188 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -181,17 +182,28 @@ exact copy-paste setup for your tool and OS.** Concretely:
 
 | Your tool | Exactly what to do (agent runs on `http://127.0.0.1:8088`) |
 |---|---|
-| **Claude Code** | `CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088 OTEL_EXPORTER_OTLP_PROTOCOL=http/json claude` |
-| **OpenAI Codex** | add to `~/.codex/config.toml`: `[otel]` / `exporter="otlp-http"` / `endpoint="http://127.0.0.1:8088"` / `protocol="json"`, then run `codex` |
-| **Gemini CLI** | `gemini --telemetry --telemetry-otlp-endpoint=http://127.0.0.1:8088` |
-| **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider`  (OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`) |
-| **opencode · Crush · Pi · Droid · ForgeCode · Goose** | export `ANTHROPIC_BASE_URL=http://127.0.0.1:8088` (or `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`), then run the tool |
+| **Claude Code** | `CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_LOGS_EXPORTER=otlp OTEL_METRICS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088 claude` (the per-call token + cache usage rides on the **logs** signal, so `OTEL_LOGS_EXPORTER=otlp` is required) |
+| **OpenAI Codex** | Codex speaks the OpenAI **Responses API**. In `~/.codex/config.toml` add a provider with `base_url = "http://127.0.0.1:8088/v1"` and `wire_api = "responses"`, set `model_provider` to it, then run `codex exec "..."`. The gateway captures `/v1/responses`. |
+| **Gemini CLI** | set `~/.gemini/settings.json` to `{"security":{"auth":{"selectedType":"gemini-api-key"}}}` (so the base-URL override doesn't flip it to gateway-auth), then `GEMINI_API_KEY=<key> GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:8088 gemini -p "..."` |
+| **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider`  (OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`; Azure: point `AZURE_API_BASE` at the gateway) |
+| **opencode** | add a provider in `opencode.json` with `options.baseURL = "http://127.0.0.1:8088/v1"`, then `opencode run -m <provider>/<model> "..."` |
+| **Crush · Droid · ForgeCode · Goose** | export `ANTHROPIC_BASE_URL=http://127.0.0.1:8088` (or `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`), then run the tool |
 | **Azure OpenAI** (any tool) | start the agent with your Azure host as upstream: `ABEN_AZURE_UPSTREAM=https://YOUR-RESOURCE.openai.azure.com abenlux gateway`, then set the tool's `azure_endpoint` to `http://127.0.0.1:8088`. The agent forwards your `api-key` header and `api-version` query untouched. |
 | **Cline · Roo · Kilo** (VS Code) | in the extension's provider settings, set **Base URL** to `http://127.0.0.1:8088` |
 | **Continue** (VS Code) | in `~/.continue/config.json`, set the model's `apiBase` to `http://127.0.0.1:8088/v1` |
 | **Cursor agent · Copilot inline** | nothing on the device — these assemble the prompt server-side, so IT pulls usage via the vendor admin API (`abenlux sync-cursor`) |
 
 Confirm it's working: run a prompt in your tool, then `abenlux me` — your call appears, privately.
+
+> **Verified end-to-end with the real tools, not mocks of them.** Capture and per-call cost were
+> checked by driving the genuine **Claude Code** (Tier-1 OTel, real session telemetry incl. cache
+> tokens), **Gemini CLI**, **OpenAI Codex** (Responses API), **aider** (against a real Azure gpt-4o,
+> where abenlux's captured cost matched aider's own report), and **opencode** through a running
+> gateway, plus the real Anthropic / OpenAI / Azure SDKs. Two real bugs were found and fixed this way:
+> Gemini's URL-based streaming flag (capture was being dropped) and its model living in the URL (it
+> priced to $0). Claude Code's usage rides on `claude_code.api_request` **log** events with bare
+> `input_tokens`/`cache_read_tokens` attributes — not the `gen_ai.*` semconv — so it needed its own
+> parser, and its raw `user.email` is dropped at the edge.
 
 Everything the developer sees is **private to them**, never the management plane:
 
@@ -243,7 +255,7 @@ the edge agent redacts on the device and forwards only the content-free `Derived
 | Tier | How | Tools | Full prompt | Exact tokens |
 |---|---|---|:--:|:--:|
 | **1 — OTel-native** | tool self-instruments to OTel GenAI | Claude Code, Codex, Gemini CLI, Copilot agent | ✅ opt-in | ✅ |
-| **2 — Gateway** | tool honors a custom `base_url` | aider, Cline, Continue, opencode, Crush, Pi, Droid, ForgeCode, Roo, Goose, Kilo | ✅ | ✅ |
+| **2 — Gateway** | tool honors a custom `base_url` | aider, Cline, Continue, opencode, Crush, Droid, ForgeCode, Roo, Goose, Kilo | ✅ | ✅ |
 | **3 — Vendor API** | prompt assembled server-side | Cursor agent, Copilot inline, Windsurf, Amazon Q | ❌ | metadata |
 
 **Tier 3 is a ceiling, not a bug.** Cursor and Copilot build the prompt on their own backend, so the
@@ -309,12 +321,14 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-179 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
-Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, a self-learning loop test,
-and a Playwright browser test of every dashboard screen and role.
+188 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
+from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
+test, and a Playwright browser test of every dashboard screen and role. The supported CLI tools were
+additionally exercised end-to-end against a running gateway (see the verification note above).
 
 ```bash
-make test       # 179 tests
+make test       # 188 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

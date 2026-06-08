@@ -95,6 +95,17 @@ def price_for(model: str | None) -> ModelPrice | None:
     return best[1] if best else None
 
 
+def cache_recoverable_usd(model: str | None, fresh_resent_tokens: int) -> float:
+    """The LOSSLESS saving from serving resent context as a cache read instead of fresh input:
+    the per-token gap between the input rate and the discounted cache-read rate. This is the only
+    waste lever that costs nothing in accuracy or detail - the exact same context is sent, it is
+    just billed as a cache hit. Returns 0 for an unpriced model or non-positive token count."""
+    p = price_for(model)
+    if not p or fresh_resent_tokens <= 0:
+        return 0.0
+    return round(fresh_resent_tokens * max(0.0, p.input - p.cache_read) / 1_000_000, 6)
+
+
 def cost_usd(
     model: str | None,
     input_tokens: int,

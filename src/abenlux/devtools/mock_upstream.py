@@ -17,6 +17,8 @@ them without complaint.
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -35,7 +37,13 @@ def _usage(request: Request) -> tuple[int, int, int]:
         inp = int(request.headers.get("x-aben-mock-input", "1820"))
     except (TypeError, ValueError):
         inp = 1820
-    return inp, max(1, inp // 8), int(inp * 0.7)  # input, output, cache_read
+    # cache-read fraction is controllable so a test can simulate a well-cached vs an uncached session.
+    # default 0.7 (typical agentic caching), pass X-Aben-Mock-Cache=0 to simulate no caching.
+    try:
+        frac = float(request.headers.get("x-aben-mock-cache", "0.7"))
+    except (TypeError, ValueError):
+        frac = 0.7
+    return inp, max(1, inp // 8), int(inp * frac)  # input, output, cache_read
 
 
 def _sse(text: str) -> StreamingResponse:
@@ -100,6 +108,35 @@ async def openai(request: Request, model: str = "gpt-5.5"):
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello world"}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": inp + out},
     })
+
+
+@app.post("/v1/responses")
+async def openai_responses(request: Request):
+    # OpenAI Responses API shape (what Codex speaks). usage uses input_tokens/output_tokens.
+    inp, out, _ = _usage(request)
+    model = "gpt-5.5"
+    body = await request.json()
+    msg = {"type": "message", "role": "assistant", "status": "completed",
+           "content": [{"type": "output_text", "text": "Hello world"}]}
+    usage = {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out,
+             "input_tokens_details": {"cached_tokens": 0}}
+    resp = {"id": "resp_mock", "object": "response", "model": model, "status": "completed",
+            "output": [msg], "usage": usage}
+    if body.get("stream"):
+        sse = (
+            'event: response.created\n'
+            f'data: {{"type":"response.created","response":{{"id":"resp_mock","model":"{model}","status":"in_progress"}}}}\n\n'
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":"Hello"}\n\n'
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":" world"}\n\n'
+            'event: response.output_text.done\n'
+            'data: {"type":"response.output_text.done","text":"Hello world"}\n\n'
+            'event: response.completed\n'
+            f'data: {{"type":"response.completed","response":{json.dumps(resp)}}}\n\n'
+        )
+        return _sse(sse)
+    return JSONResponse(resp)
 
 
 @app.post("/v1beta/models/{model_path:path}")

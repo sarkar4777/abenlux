@@ -98,6 +98,7 @@ def _event_from_attrs(a: dict[str, Any]) -> CanonicalEvent | None:
             input_tokens=int(a.get("gen_ai.usage.input_tokens", 0) or 0),
             output_tokens=int(a.get("gen_ai.usage.output_tokens", 0) or 0),
             cache_read_tokens=int(a.get("gen_ai.usage.cache_read_input_tokens", 0) or 0),
+            cache_creation_tokens=int(a.get("gen_ai.usage.cache_creation_input_tokens", 0) or 0),
         ),
         finish_reasons=a.get("gen_ai.response.finish_reasons") or [],
     )
@@ -125,6 +126,38 @@ def event_from_genai_log(record: dict) -> CanonicalEvent | None:
     return _event_from_attrs(a)
 
 
+def event_from_claude_code_log(record: dict) -> CanonicalEvent | None:
+    """Claude Code self-instruments with its OWN telemetry, not the gen_ai semconv: an
+    `api_request` log event carrying bare input_tokens / output_tokens / cache_read_tokens /
+    cache_creation_tokens / model attributes (the token usage METRIC repeats the same numbers,
+    so we parse only the log to avoid double counting). Without this, real Claude Code is not
+    captured at all. user.id (already a hash) is the actor, user.email (raw PII) is dropped."""
+    a = _attrs(record)
+    body = record.get("body")
+    name = a.get("event.name") or (body.get("stringValue") if isinstance(body, dict) else None)
+    if name not in ("api_request", "claude_code.api_request"):
+        return None
+    if "input_tokens" not in a and "output_tokens" not in a:
+        return None
+    ev = CanonicalEvent(
+        tier=CaptureTier.OTEL_NATIVE,
+        provider=Provider.ANTHROPIC,                       # Claude Code calls Anthropic models
+        operation="chat",
+        request_model=a.get("model"),
+        response_model=a.get("model"),
+        usage=Usage(
+            input_tokens=int(a.get("input_tokens", 0) or 0),
+            output_tokens=int(a.get("output_tokens", 0) or 0),
+            cache_read_tokens=int(a.get("cache_read_tokens", 0) or 0),
+            cache_creation_tokens=int(a.get("cache_creation_tokens", 0) or 0),
+        ),
+    )
+    ev.work.tool = "claude-code"
+    ev.work.app_category = "cli"
+    ev.actor_raw = a.get("user.id")                        # a hash, never the email
+    return ev
+
+
 def events_from_otlp_traces(payload: dict) -> list[CanonicalEvent]:
     events: list[CanonicalEvent] = []
     for rs in payload.get("resourceSpans", []):
@@ -141,7 +174,7 @@ def events_from_otlp_logs(payload: dict) -> list[CanonicalEvent]:
     for rl in payload.get("resourceLogs", []):
         for sl in rl.get("scopeLogs", []):
             for rec in sl.get("logRecords", []):
-                ev = event_from_genai_log(rec)
+                ev = event_from_genai_log(rec) or event_from_claude_code_log(rec)
                 if ev:
                     events.append(ev)
     return events

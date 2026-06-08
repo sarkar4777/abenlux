@@ -35,13 +35,14 @@ def test_retry_loop_suggestion_per_user():
     assert any(s.kind == "retry_loop" and s.severity == "warn" for s in sigs)
 
 
-def test_context_bloat_suggestion():
+def test_uncached_resend_suggests_caching():
     mon = SessionWasteMonitor()
     e = _ev("one more small thing", inp=10000, out=50)
-    e.duplicate_history_tokens = 9000  # 90% resent history
+    e.duplicate_history_tokens = 9000  # 90% resent history, none of it cached
     sigs = mon.observe(e)
-    bloat = [s for s in sigs if s.kind == "context_bloat"]
-    assert bloat and bloat[0].recoverable_tokens == 9000
+    cache = [s for s in sigs if s.kind == "cache_inefficiency"]
+    assert cache and cache[0].recoverable_tokens == 9000
+    assert "caching" in cache[0].suggestion.lower()
 
 
 def test_answered_already_suggestion():

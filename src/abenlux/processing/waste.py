@@ -63,6 +63,7 @@ class SessionWasteMonitor:
     context_bloat_ratio: float = 0.6     # >60% of input is unchanged resent history
     similarity_fn: SimilarityFn = lexical_similarity
     cheap_model_token_ceiling: int = 350  # below this, a small model usually suffices
+    max_history: int = 100               # bound memory + keep answered-already O(window), not O(session)
 
     _prompts: list[str] = field(default_factory=list)
     _answers: list[str] = field(default_factory=list)
@@ -138,4 +139,7 @@ class SessionWasteMonitor:
 
         self._prompts.append(prompt)
         self._answers.append(answer)
+        if len(self._prompts) > self.max_history:  # bound memory on very long sessions
+            self._prompts = self._prompts[-self.max_history:]
+            self._answers = self._answers[-self.max_history:]
         return signals

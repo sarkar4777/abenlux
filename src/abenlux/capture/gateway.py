@@ -35,7 +35,7 @@ from starlette.background import BackgroundTask
 from abenlux.attribution.attributor import KnowledgeGraph
 from abenlux.capture.adapters import build_event
 from abenlux.capture.context import current_actor, current_work_context
-from abenlux.capture.diff import SessionHistoryTracker
+from abenlux.capture.diff import SessionHistoryTracker, conversation_key
 from abenlux.capture.otel_ingest import events_from_otlp
 from abenlux.collaborate.broker import CollaborationBroker, TopicSignal
 from abenlux.developer.feed import LocalSignalFeed
@@ -172,7 +172,7 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         event.actor_raw = actor
         # resent-history bloat: diff this request's messages against the actor's last request
         event.duplicate_history_tokens = _history.duplicate_history_tokens(
-            f"{actor}:{provider.value}", event.messages
+            conversation_key(actor, provider.value, event.work.repo, event.messages), event.messages
         )
         result = process(
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,

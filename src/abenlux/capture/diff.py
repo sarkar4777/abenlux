@@ -17,6 +17,7 @@ beyond the in-flight compare and never persisted.
 from __future__ import annotations
 
 import copy
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -26,6 +27,20 @@ from abenlux.capture.adapters import estimate_tokens
 def _msg_key(m) -> str:
     # role + content identity, content here is pre-redaction in-flight text
     return f"{getattr(m, 'role', '')}\x00{getattr(m, 'content', '')}"
+
+
+def conversation_key(actor: str, provider: str, repo: str | None, messages: list) -> str:
+    """a session key that isolates concurrent conversations. anchored on the FIRST user message
+    (the task), which is stable across a conversation's turns but distinct between conversations -
+    so two agentic sessions on the same provider/repo do not thrash one shared baseline. system
+    prompts are skipped because tools often send the same one for every conversation."""
+    anchor = ""
+    for m in messages:
+        if getattr(m, "role", "") == "user" and (getattr(m, "content", "") or ""):
+            anchor = m.content[:200]
+            break
+    h = hashlib.blake2b(anchor.encode("utf-8", "replace"), digest_size=6).hexdigest()
+    return f"{actor}:{provider}:{repo or '-'}:{h}"
 
 
 def unchanged_prefix_chars(prev: list, curr: list) -> int:

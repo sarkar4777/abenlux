@@ -195,9 +195,26 @@ def cmd_report(args) -> None:
     print(f" orphan token share : {rep['orphan_token_share']*100:.1f}%  "
           f"(unattributed AI spend - the headline waste metric)")
     band = rep["recoverable_resent_history_usd"]
-    print(f" recoverable resent-history : ${band['floor']:,.2f}–${band['ceiling']:,.2f}")
+    print(f" recoverable resent-history : ${band['floor']:,.2f}-${band['ceiling']:,.2f}")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
+    trend = rep.get("trend")
+    if trend and (trend["orphan_share"]["alert"] or trend["cost"]["alert"]):
+        os_ = trend["orphan_share"]
+        print(f" DRIFT ALERT : unattributed spend {os_['direction']} "
+              f"{os_['prior']*100:.0f}% -> {os_['recent']*100:.0f}% window-over-window")
+    inv = rep.get("investment")
+    if inv:
+        tot = sum(inv.values()) or 1
+        print(f"\n what the spend is for : net-new ${inv['net_new']:,.2f} ({inv['net_new']/tot*100:.0f}%)  "
+              f"maintenance ${inv['maintenance']:,.2f} ({inv['maintenance']/tot*100:.0f}%)  "
+              f"unclassified ${inv['unclassified']:,.2f}")
+    new = rep.get("new_initiatives") or []
+    if new:
+        print(" new this period:")
+        for n in new:
+            cost = "spend hidden (<k devs)" if n["cost"] is None else f"${n['cost']:,.2f}"
+            print(f"   {n['label']:<34} {n.get('work_type') or 'work':<11} {cost}")
     print("\n spend by objective:")
     for r in rep["by_objective"]:
         if r["suppressed"]:
@@ -226,6 +243,9 @@ def cmd_me(args) -> None:
     print(f"== your private view ({actor}) ==")
     print(f" calls:{rep['calls']}  tokens:{rep['tokens']:,}  cost:${rep['cost_usd']:,.4f}")
     print(f" retry loops:{rep['retry_loops']}  resent-history tokens:{rep['resent_history_tokens']:,}")
+    mix = rep.get("work_type_mix") or []
+    if mix:
+        print(" your work mix: " + "  ".join(f"{m['label']} ${m['cost']:,.2f}" for m in mix))
     print(" (private to you, never visible to management)")
     print("\n recent nudges (this device only):")
     for e in LocalSignalFeed().recent(args.n):

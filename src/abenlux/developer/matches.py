@@ -56,6 +56,11 @@ class MatchStore:
         )
         self.conn.commit()
 
+    def has_consented(self, owner: str, peer: str) -> bool:
+        # whether `owner` has already requested an intro to `peer` (one direction)
+        cur = self.conn.execute("SELECT 1 FROM consents WHERE owner=? AND peer=?", (owner, peer))
+        return cur.fetchone() is not None
+
     def mutually_consented(self, a: str, b: str) -> bool:
         cur = self.conn.execute(
             "SELECT (SELECT 1 FROM consents WHERE owner=? AND peer=?) AND "

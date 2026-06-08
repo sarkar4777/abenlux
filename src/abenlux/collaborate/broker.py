@@ -56,6 +56,7 @@ class Match:
 @dataclass
 class CollaborationBroker:
     threshold: float = 0.82
+    max_signals: int = 5000            # bound memory for a central broker across many developers
     signals: list[TopicSignal] = field(default_factory=list)
     _consents: set[tuple[str, str]] = field(default_factory=set)
 
@@ -76,7 +77,11 @@ class CollaborationBroker:
                 matches.append(
                     Match(sig.actor_pseudonym, other.actor_pseudonym, round(sim, 3), other.topic_label, mode)
                 )
+        # keep only the actor's latest signal, and bound total memory for a long-lived central broker
+        self.signals = [s for s in self.signals if s.actor_pseudonym != sig.actor_pseudonym]
         self.signals.append(sig)
+        if len(self.signals) > self.max_signals:
+            self.signals = self.signals[-self.max_signals:]
         return matches
 
     def record_consent(self, actor: str, peer: str) -> None:

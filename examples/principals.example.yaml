@@ -10,8 +10,12 @@
 #   admin     : aggregates + knowledge-graph/principal management + their own view
 # No role — not even admin — can see another named individual's detail. That permission does
 # not exist by design.
+#
+# Optional contact handles (slack/teams/email/github) are a static fallback for the collaboration
+# contact card. They are revealed to a peer ONLY after a mutual double-blind intro, and a developer
+# can override them at runtime with `abenlux contact set ...`.
 principals:
-  - {token: dev-token,   subject: dev@example.com,     display_name: "Dev Developer",  role: developer}
+  - {token: dev-token,   subject: dev@example.com,     display_name: "Dev Developer",  role: developer, slack: "@dev"}
   - {token: mgr-token,   subject: manager@example.com, display_name: "Morgan Manager", role: manager}
-  - {token: fin-token,   subject: finance@example.com, display_name: "Finn Finance",   role: finance}
+  - {token: fin-token,   subject: finance@example.com, display_name: "Finn Finance",   role: finance, slack: "@finn", email: finn@example.com}
   - {token: admin-token, subject: admin@example.com,   display_name: "Avery Admin",    role: admin}

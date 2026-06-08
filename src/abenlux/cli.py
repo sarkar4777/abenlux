@@ -235,6 +235,141 @@ def cmd_me(args) -> None:
         print(f"   [{e['kind']:<16}] ({tag}) {e['line']}{extra}")
 
 
+def _fmt_contact(card) -> str:
+    if not card:
+        return "a colleague (hidden until you both request an intro)"
+    bits = [card.get("name", "a colleague")]
+    for k in ("slack", "teams", "email", "github"):
+        if card.get(k):
+            bits.append(f"{k}: {card[k]}")
+    return "   ".join(bits)
+
+
+def _print_matches(matches) -> None:
+    if not matches:
+        print(" No collaboration matches yet. When a colleague works on a similar problem, it shows here.")
+        return
+    print(f" You have {len(matches)} collaboration match(es):\n")
+    for m in matches:
+        who = _fmt_contact(m.get("peer_contact")) if m.get("peer_contact") else \
+            (m.get("peer_revealed") or "a colleague (hidden until you both request an intro)")
+        pending = " - you have requested an intro, waiting on them" if m.get("you_requested") and not m.get("peer_contact") else ""
+        print(f"  [{m['id']}] {m['mode'].replace('_', ' ')}: '{m['topic']}'  (similarity {m['similarity']})")
+        print(f"        with {who}{pending}")
+    print("\n Request a double-blind intro, right here in your terminal:")
+    print("   abenlux collab intro <id>      (or just `abenlux collab intro` if you have one match)")
+
+
+def _collab_matches_remote(b, h):
+    import httpx
+    return httpx.get(f"{b}/api/me", headers=h, timeout=15).json().get("collaboration_matches", [])
+
+
+def cmd_collab(args) -> None:
+    # see and act on collaboration matches from the terminal, no browser. forward mode talks to the
+    # collector with your token, solo mode reads your local match store.
+    import os
+
+    action = getattr(args, "action", "list") or "list"
+    base, token = SETTINGS.collector_url, os.getenv("ABEN_TOKEN")
+    remote = bool(base and token)
+
+    if remote:
+        import httpx
+        h, b = {"Authorization": f"Bearer {token}"}, base.rstrip("/")
+        matches = _collab_matches_remote(b, h)
+        if action == "list":
+            _print_matches(matches)
+            return
+        mid = _resolve_match_id(args.id, matches)
+        if mid is None:
+            return
+        resp = httpx.post(f"{b}/api/collab/{mid}/consent", headers=h, timeout=15)
+        if resp.status_code != 200:
+            detail = resp.json().get("detail", resp.status_code) if resp.content else resp.status_code
+            print(f" Could not request intro for match {mid}: {detail}. Run `abenlux collab` to see your matches.")
+            return
+        r = resp.json()
+        _report_intro(r.get("mutual"), r.get("peer_contact"))
+        return
+
+    # solo / local match store
+    from abenlux.developer.matches import MatchStore
+    from abenlux.privacy.pseudonymize import pseudonymize
+    pseudo = pseudonymize(SETTINGS.actor or current_actor(), SETTINGS.hmac_bytes)
+    ms = MatchStore(os.getenv("ABEN_MATCH_DB", "abenlux-matches.db"))
+    rows = [{"id": m["id"], "peer": m["peer"], "topic": m["topic"], "similarity": m["similarity"],
+             "mode": m["mode"], "peer_revealed": None} for m in ms.for_owner(pseudo)]
+    if action == "list":
+        ms.close()
+        _print_matches(rows)
+        return
+    mid = _resolve_match_id(args.id, rows)
+    if mid is not None:
+        peer = next(m["peer"] for m in rows if m["id"] == mid)
+        ms.record_consent(pseudo, peer)
+        _report_intro(ms.mutually_consented(pseudo, peer), None)
+    ms.close()
+
+
+def _resolve_match_id(given, matches):
+    # intuitive: use the given id, or if you have exactly one match use it automatically
+    if given is not None:
+        if any(m["id"] == given for m in matches):
+            return given
+        print(f" No match [{given}] for you. Run `abenlux collab` to see your match ids.")
+        return None
+    if len(matches) == 1:
+        return matches[0]["id"]
+    if not matches:
+        print(" You have no collaboration matches yet.")
+    else:
+        print(" You have several matches - pick one: abenlux collab intro <id>")
+        _print_matches(matches)
+    return None
+
+
+def _report_intro(mutual, card):
+    if mutual:
+        print(" Intro made - you have both opted in. Reach out via:")
+        print("   " + _fmt_contact(card))
+    else:
+        print(" Intro requested. The other developer will see a request too, and you are revealed to each")
+        print(" other (with the contact handles you each chose to share) only when they also accept.")
+
+
+def cmd_contact(args) -> None:
+    # your shareable contact card. set the handles you are willing to share (slack/teams/email/github),
+    # revealed to a peer ONLY after a mutual double-blind intro.
+    import os
+
+    fields = {k: getattr(args, k) for k in ("name", "email", "slack", "teams", "github", "note")
+              if getattr(args, k)}
+    setting = args.action == "set" or bool(fields)
+    base, token = SETTINGS.collector_url, os.getenv("ABEN_TOKEN")
+    if base and token:
+        import httpx
+        h, b = {"Authorization": f"Bearer {token}"}, base.rstrip("/")
+        if setting:
+            card = httpx.post(f"{b}/api/contact", json=fields, headers=h, timeout=15).json().get("contact", {})
+        else:
+            card = httpx.get(f"{b}/api/contact", headers=h, timeout=15).json().get("contact", {})
+    else:
+        from abenlux.developer.contacts import ContactStore
+        from abenlux.privacy.pseudonymize import pseudonymize
+        pseudo = pseudonymize(SETTINGS.actor or current_actor(), SETTINGS.hmac_bytes)
+        cs = ContactStore(os.getenv("ABEN_CONTACT_DB", "abenlux-contacts.db"))
+        card = cs.set(pseudo, fields) if setting else (cs.get(pseudo) or {})
+        cs.close()
+    if card:
+        print(" Your contact card (shared only after a mutual double-blind intro):")
+        for k, v in card.items():
+            print(f"   {k:<7}: {v}")
+    else:
+        print(" No contact card yet. Add the handles colleagues can reach you on after a mutual intro.")
+    print("\n set/update:  abenlux contact set --slack @you --email you@corp --teams 'Your Name'")
+
+
 def cmd_graph(args) -> None:
     # the developer's own on-device knowledge graph: objectives, tickets, purpose, learned vocabulary
     from abenlux.developer.knowledge_graph import DevKnowledgeGraph
@@ -275,63 +410,113 @@ def cmd_watch(args) -> None:
         print("\nstopped.")
 
 
+_OVERVIEW = """abenlux - AI spend -> value attribution plane
+
+YOUR STUFF (private to you, never seen by management)
+  abenlux me                 your spend + recent waste/collaboration nudges
+  abenlux watch              live tail of your private signals (keep in a spare pane)
+  abenlux graph              your on-device knowledge graph (objectives, tickets, purpose)
+  abenlux collab             see collaboration matches; `collab intro <id>` to request an intro
+  abenlux contact            your shareable contact card (revealed only on a mutual intro)
+
+SET UP CAPTURE
+  abenlux gateway            run the on-device capture agent (loopback proxy + OTLP ingest)
+  abenlux onboard <tool>     print the exact setup for your tool and shell
+  abenlux tiers              the tool capability matrix
+  abenlux detect             which AI tool is detected here
+  abenlux mock               a fake upstream to verify capture without spending tokens
+
+MANAGEMENT / IT
+  abenlux serve              the collector + dashboard (k-anonymized, RBAC)
+  abenlux report             spend -> value report (k-anonymity gated)
+  abenlux sync-cursor        pull Tier-3 Cursor usage (metadata only)
+
+UTIL
+  abenlux demo               run the full edge pipeline once, offline
+  abenlux cost <model>       price an interaction
+
+Run `abenlux <command> -h` for details on any command."""
+
+
+def cmd_help(_args) -> None:
+    print(_OVERVIEW)
+
+
 def main() -> None:
-    p = argparse.ArgumentParser(prog="abenlux")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(prog="abenlux", description="AI spend -> value attribution plane.",
+                                add_help=True)
+    sub = p.add_subparsers(dest="cmd")
 
-    sub.add_parser("demo").set_defaults(func=cmd_demo)
+    sub.add_parser("demo", help="run the full edge pipeline once, offline").set_defaults(func=cmd_demo)
 
-    g = sub.add_parser("gateway")
+    g = sub.add_parser("gateway", help="run the on-device capture agent")
     g.add_argument("--port", type=int, default=8088)
     g.set_defaults(func=cmd_gateway)
 
-    sv = sub.add_parser("serve")
+    sv = sub.add_parser("serve", help="run the management collector + dashboard")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8090)
     sv.set_defaults(func=cmd_serve)
 
-    sc = sub.add_parser("sync-cursor")
+    sc = sub.add_parser("sync-cursor", help="pull Tier-3 Cursor usage (metadata only)")
     sc.add_argument("--period", default="30d")
     sc.set_defaults(func=cmd_sync_cursor)
 
-    mk = sub.add_parser("mock")
+    mk = sub.add_parser("mock", help="fake upstream to verify capture without spending tokens")
     mk.add_argument("--port", type=int, default=9111)
     mk.set_defaults(func=cmd_mock)
 
-    sub.add_parser("tiers").set_defaults(func=cmd_tiers)
+    sub.add_parser("tiers", help="the tool capability matrix").set_defaults(func=cmd_tiers)
 
-    o = sub.add_parser("onboard")
-    o.add_argument("tool", nargs="?")
+    o = sub.add_parser("onboard", help="print the exact setup for a tool on your OS/shell")
+    o.add_argument("tool", nargs="?", help="tool name, e.g. claude-code, aider, cline")
     o.add_argument("--shell", choices=["powershell", "cmd", "bash"])
     o.add_argument("--base", default="http://127.0.0.1:8088")
     o.set_defaults(func=cmd_onboard)
 
-    sub.add_parser("detect").set_defaults(func=cmd_detect)
+    sub.add_parser("detect", help="which AI tool is detected here").set_defaults(func=cmd_detect)
 
-    c = sub.add_parser("cost")
+    c = sub.add_parser("cost", help="price an interaction")
     c.add_argument("model")
     c.add_argument("--input", type=int, default=0)
     c.add_argument("--output", type=int, default=0)
     c.add_argument("--cache-read", type=int, default=0, dest="cache_read")
     c.set_defaults(func=cmd_cost)
 
-    r = sub.add_parser("report")
+    r = sub.add_parser("report", help="management spend -> value report (k-anonymity gated)")
     r.add_argument("--json", action="store_true")
     r.set_defaults(func=cmd_report)
 
-    m = sub.add_parser("me")
-    m.add_argument("-n", type=int, default=20)
+    m = sub.add_parser("me", help="your own private spend + recent nudges")
+    m.add_argument("-n", type=int, default=20, help="how many recent nudges to show")
     m.set_defaults(func=cmd_me)
 
-    w = sub.add_parser("watch")
+    w = sub.add_parser("watch", help="live tail of your private signals")
     w.add_argument("--all", action="store_true", help="print existing history before tailing")
     w.set_defaults(func=cmd_watch)
 
-    gr = sub.add_parser("graph")
+    gr = sub.add_parser("graph", help="your developer-local knowledge graph")
     gr.add_argument("--json", action="store_true")
     gr.set_defaults(func=cmd_graph)
 
+    cl = sub.add_parser("collab", help="see and act on collaboration matches (no browser)")
+    cl.add_argument("action", nargs="?", choices=["list", "intro"], default="list",
+                    help="`list` (default) or `intro` to request a double-blind intro")
+    cl.add_argument("id", nargs="?", type=int, help="match id (optional if you have one match)")
+    cl.set_defaults(func=cmd_collab)
+
+    ct = sub.add_parser("contact", help="your shareable contact card (revealed only on mutual intro)")
+    ct.add_argument("action", nargs="?", choices=["show", "set"], default="show")
+    for f in ("name", "email", "slack", "teams", "github", "note"):
+        ct.add_argument(f"--{f}")
+    ct.set_defaults(func=cmd_contact)
+
+    sub.add_parser("help", help="show the command overview").set_defaults(func=cmd_help)
+
     args = p.parse_args()
+    if not getattr(args, "func", None):  # bare `abenlux` -> friendly overview, not an error
+        cmd_help(args)
+        return
     args.func(args)
 
 

@@ -54,9 +54,12 @@ finout FinOps-for-AI guidance, getmaxim/LiteLLM/Portkey gateway docs, Cursor Adm
 - **Pseudonymization is not unlinkability.** A stable pseudonym supports longitudinal analysis; a
   determined insider with the HMAC key and a known email list could re-link. The mitigation is key
   custody (analytics plane cannot read the key), not cryptographic unlinkability.
-- **Static principals / single-process broker in the scaffold.** Production swaps the YAML principals
-  for SSO/OIDC and the in-process collaboration broker for a privacy-preserving service. The seams
-  are there; the hardened services are deployer-supplied.
+- **Static principals / brute-force broker.** Production swaps the YAML principals for SSO/OIDC. The
+  collaboration broker runs centrally at the collector and matches across developers, but it is a
+  brute-force in-memory matcher (one latest embedding per developer, O(n) scan) - right for a pilot
+  of hundreds to low thousands. For 20k-30k developers, swap it for a vector index (pgvector / Qdrant
+  / hnswlib) partitioned by (client, residency) behind the same `submit() -> matches` contract, as
+  documented in the README. The match/consent/contact layer is unchanged either way.
 - **Postgres backend is implemented but not integration-tested here** against a live server (the
   adapter and SQL translation are unit-tested with a fake connection). Run it against a real
   Postgres in staging before trusting it at scale.

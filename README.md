@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-156%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-170%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -64,7 +64,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 156 tests
+make test             # 170 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -80,6 +80,59 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8088 <your tool>            # terminal C
 abenlux me            # your call shows up, privately
 abenlux graph         # your personal on-device knowledge graph
 ```
+
+---
+
+## Stop solving the same problem twice — double-blind collaboration
+
+Across a big team, people burn tokens re-solving what a colleague already cracked. The naive fix — a
+"these two duplicate work" report on a manager's desk — is an efficiency-policing weapon. So Abenlux
+does it **peer-to-peer and double-blind**, and it works **without leaving your terminal**.
+
+Matching runs **centrally at the collector** over content-free signals (the embedding + objective,
+never prompt text), so two developers on two machines actually match. Two walls are enforced in code:
+it never matches across a different **client** (Chinese wall) or a **data-residency** boundary. When
+there's a hit, *you* get a private nudge — never your manager:
+
+```bash
+$ abenlux collab
+  [2] live duplication: 'Acme - Checkout Platform'  (similarity 0.91)
+        with a colleague (hidden until you both request an intro)
+
+$ abenlux collab intro 2        # request a double-blind intro, from the terminal
+  Intro requested. You are revealed to each other only when they also accept.
+```
+
+**Identities and contact handles are exchanged only on mutual consent.** Each developer sets the
+handles they're willing to share, and they're revealed to a peer *only* after both opt in:
+
+```bash
+$ abenlux contact set --slack @you --teams "Your Name" --email you@corp
+$ abenlux collab                # after the other dev also accepts:
+  [2] live duplication: 'Acme - Checkout Platform'
+        with Finn Finance   slack: @finn   teams: Finn Finance   email: finn@corp
+```
+
+Now you can reach out on Slack/Teams/DM and compare notes. It's also a card in the dashboard's *My
+view* with a **Request intro** button — same double-blind contract. Two modes: **live duplication**
+(you're both on it right now) and **solved reuse** (the org already cracked it — here's who to ask).
+
+### Scaling collaboration to 20,000–30,000 developers
+
+The bundled broker is a brute-force in-memory matcher (one latest embedding per developer, O(n) scan)
+— perfect for a pilot of hundreds to low thousands. For tens of thousands of developers, swap the
+matcher for a **vector index** without changing the interface (`submit(signal) → matches`):
+
+- Keep **one latest embedding per developer** (the broker already does this), partitioned by
+  **(client, residency)** so the Chinese wall is a partition boundary, not a scan filter.
+- Back it with **pgvector / Qdrant / Milvus / hnswlib** and make a match an **ANN top-k query**
+  above the similarity threshold within the partition — O(log n) instead of O(n), and stateless, so
+  the collector scales horizontally. At 30k devs that's ~30k vectors per partition, trivially indexed.
+- Embeddings are content-free vectors, so this stays within the privacy model. The match/consent/
+  contact layer (`developer/matches.py`, `developer/contacts.py`) is unchanged.
+
+That seam is intentional: the in-memory broker and a vector-DB broker are interchangeable behind the
+same `CollaborationBroker.submit` contract.
 
 ---
 
@@ -108,7 +161,7 @@ exact copy-paste setup for your tool and OS.** Concretely:
 | **Claude Code** | `CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8088 OTEL_EXPORTER_OTLP_PROTOCOL=http/json claude` |
 | **OpenAI Codex** | add to `~/.codex/config.toml`: `[otel]` / `exporter="otlp-http"` / `endpoint="http://127.0.0.1:8088"` / `protocol="json"`, then run `codex` |
 | **Gemini CLI** | `gemini --telemetry --telemetry-otlp-endpoint=http://127.0.0.1:8088` |
-| **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider` &nbsp;(OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`) |
+| **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider`  (OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`) |
 | **opencode · Crush · Pi · Droid · ForgeCode · Goose** | export `ANTHROPIC_BASE_URL=http://127.0.0.1:8088` (or `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`), then run the tool |
 | **Cline · Roo · Kilo** (VS Code) | in the extension's provider settings, set **Base URL** to `http://127.0.0.1:8088` |
 | **Continue** (VS Code) | in `~/.continue/config.json`, set the model's `apiBase` to `http://127.0.0.1:8088/v1` |
@@ -122,6 +175,8 @@ Everything the developer sees is **private to them**, never the management plane
 abenlux me        # your spend + waste/collab nudges
 abenlux watch     # live ambient tail in a spare terminal pane
 abenlux graph     # your local knowledge graph: objectives, tickets, purpose, learned vocabulary
+abenlux collab    # collaboration matches; `collab intro <id>` to request a double-blind intro
+abenlux contact   # set the handles colleagues can reach you on after a mutual intro
 ```
 
 Native desktop toasts fire automatically when a nudge happens. Full per-tool/per-OS guide:
@@ -221,6 +276,8 @@ abenlux cost <model>                       price an interaction
 abenlux report                             management spend→value report (k-anonymity gated)
 abenlux me / watch                         your own private spend + nudges (summary / live tail)
 abenlux graph [--json]                     your developer-local knowledge graph
+abenlux collab [intro <id>]                see / act on double-blind collaboration matches
+abenlux contact [set --slack ...]          your shareable contact card (revealed only on mutual intro)
 abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor usage (metadata only)
 ```
 
@@ -228,12 +285,12 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-156 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+170 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic and OpenAI SDKs driven through a live gateway**, a self-learning loop test, and a Playwright
 browser test of every dashboard screen and role.
 
 ```bash
-make test       # 156 tests
+make test       # 170 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

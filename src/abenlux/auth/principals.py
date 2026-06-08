@@ -31,11 +31,13 @@ class PrincipalStore:
         by_token: dict[str, Principal] = {}
         for p in data.get("principals", []):
             subject = p["subject"]
+            contact = {k: p[k] for k in ("email", "slack", "teams", "github") if p.get(k)}
             by_token[p["token"]] = Principal(
                 subject=subject,
                 display_name=p.get("display_name", subject),
                 role=Role(p.get("role", "developer")),
                 pseudonym=pseudonymize(subject, hmac_key),
+                contact=contact or None,
             )
         return cls(by_token)
 
@@ -43,14 +45,14 @@ class PrincipalStore:
     def default_dev(cls, *, hmac_key: bytes) -> "PrincipalStore":
         """offline default so the API runs without config. obviously not for production."""
         people = [
-            ("dev-token", "dev@example.com", "Dev Developer", Role.DEVELOPER),
-            ("mgr-token", "manager@example.com", "Morgan Manager", Role.MANAGER),
-            ("fin-token", "finance@example.com", "Finn Finance", Role.FINANCE),
-            ("admin-token", "admin@example.com", "Avery Admin", Role.ADMIN),
+            ("dev-token", "dev@example.com", "Dev Developer", Role.DEVELOPER, {"slack": "@dev", "email": "dev@example.com"}),
+            ("mgr-token", "manager@example.com", "Morgan Manager", Role.MANAGER, None),
+            ("fin-token", "finance@example.com", "Finn Finance", Role.FINANCE, {"slack": "@finn", "email": "finance@example.com"}),
+            ("admin-token", "admin@example.com", "Avery Admin", Role.ADMIN, None),
         ]
         by_token = {
-            tok: Principal(subj, name, role, pseudonymize(subj, hmac_key))
-            for tok, subj, name, role in people
+            tok: Principal(subj, name, role, pseudonymize(subj, hmac_key), contact=contact)
+            for tok, subj, name, role, contact in people
         }
         return cls(by_token)
 
@@ -65,6 +67,15 @@ class PrincipalStore:
         for p in self._by_token.values():
             if p.pseudonym == pseudonym:
                 return p.display_name
+        return None
+
+    def pseudonym_to_contact(self, pseudonym: str) -> dict | None:
+        """static contact card for a peer (name + handles), revealed ONLY on mutual consent."""
+        for p in self._by_token.values():
+            if p.pseudonym == pseudonym:
+                card = {"name": p.display_name}
+                card.update(p.contact or {})
+                return card
         return None
 
 

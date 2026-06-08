@@ -134,7 +134,7 @@ def _surface_to_developer(result, event) -> None:
         )
         for match in _broker.submit(sig):
             _feed.append_collab(match, tool=tool)
-            _toast("collab", f"A colleague is on a similar problem: {match.topic}. Want a double-blind intro?")
+            _toast("collab", f"A colleague is on a similar problem: {match.topic}. Run `abenlux collab` for a double-blind intro.")
             # persist for the dashboard, one row per side, each owner sees only their own
             _matchstore.record(match.a, match.b, match.topic, match.similarity, match.mode)
             _matchstore.record(match.b, match.a, match.topic, match.similarity, match.mode)

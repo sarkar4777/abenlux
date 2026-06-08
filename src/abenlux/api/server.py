@@ -25,6 +25,7 @@ from abenlux.analytics.reports import developer_report, management_report
 from abenlux.attribution.attributor import KnowledgeGraph
 from abenlux.auth.principals import load_principals
 from abenlux.auth.rbac import AuthorizationError, Permission, Principal, require
+from abenlux.collaborate.broker import CollaborationBroker, TopicSignal
 from abenlux.developer.matches import MatchStore
 from abenlux.schema import DerivedRecord
 from abenlux.settings import SETTINGS
@@ -35,6 +36,9 @@ _STATIC = Path(__file__).parent / "static"
 
 _principals = load_principals()
 _kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path) if SETTINGS.kg_path else KnowledgeGraph()
+# central, double-blind collaboration broker. runs over the content-free forwarded records (the
+# embedding + objective, never prompt text), so two developers on two machines actually match.
+_broker = CollaborationBroker()
 
 
 def _store():
@@ -44,6 +48,23 @@ def _store():
 def _matches() -> MatchStore:
     import os
     return MatchStore(os.getenv("ABEN_MATCH_DB", "abenlux-matches.db"))
+
+
+def _contacts():
+    import os
+
+    from abenlux.developer.contacts import ContactStore
+    return ContactStore(os.getenv("ABEN_CONTACT_DB", "abenlux-contacts.db"))
+
+
+def _peer_card(peer_pseudonym: str, contacts) -> dict:
+    # the peer's shareable card: their self-set handles override the static principal fallback.
+    # only ever called for a mutually-consented match.
+    card = _principals.pseudonym_to_contact(peer_pseudonym) or {"name": "a colleague"}
+    overlay = contacts.get(peer_pseudonym)
+    if overlay:
+        card = {**card, **overlay}
+    return card
 
 
 def current_principal(
@@ -93,14 +114,33 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     payload = await request.json()
     items = payload if isinstance(payload, list) else [payload]
     store = _store()
+    mstore = _matches()
     n = 0
     for d in items:
         # accept only known fields, a forwarded record that smuggled a content key is rejected
         clean = {k: v for k, v in d.items() if k in _DERIVED_FIELDS}
-        store.insert(DerivedRecord(**clean))
+        rec = DerivedRecord(**clean)
+        store.insert(rec)
+        _match_centrally(rec, mstore)
         n += 1
+    mstore.close()
     store.close()
     return {"ingested": n}
+
+
+def _match_centrally(rec: DerivedRecord, mstore: MatchStore) -> None:
+    # double-blind matching at the collector over content-free signals. writes one row per side,
+    # each owner sees only their own. management never sees this - it is not a report.
+    if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
+        return
+    obj = _kg.objectives.get(rec.objective_id)
+    sig = TopicSignal(
+        actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
+        topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
+    )
+    for m in _broker.submit(sig):
+        mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)
+        mstore.record(m.b, m.a, m.topic, m.similarity, m.mode)
 
 
 @app.get("/api/whoami")
@@ -119,17 +159,22 @@ async def me(principal: Principal = Depends(current_principal)):
     rep = developer_report(store, principal.pseudonym)  # scoped to caller's pseudonym only
     store.close()
     mstore = _matches()
+    contacts = _contacts()
     raw_matches = mstore.for_owner(principal.pseudonym)
     matches = []
     for m in raw_matches:
-        revealed = None
+        revealed, card = None, None
         if mstore.mutually_consented(principal.pseudonym, m["peer"]):
-            revealed = _principals.pseudonym_to_name(m["peer"])  # peer named only on mutual consent
+            # identity AND contact handles revealed only after BOTH opted in
+            card = _peer_card(m["peer"], contacts)
+            revealed = card.get("name")
         matches.append({
             "id": m["id"], "topic": m["topic"], "similarity": m["similarity"],
-            "mode": m["mode"], "peer_revealed": revealed,
+            "mode": m["mode"], "peer_revealed": revealed, "peer_contact": card,
+            "you_requested": mstore.has_consented(principal.pseudonym, m["peer"]),
         })
     mstore.close()
+    contacts.close()
     rep["collaboration_matches"] = matches
     return rep
 
@@ -145,9 +190,34 @@ async def collab_consent(match_id: int, principal: Principal = Depends(current_p
     peer = owned[match_id]["peer"]
     mstore.record_consent(principal.pseudonym, peer)
     mutual = mstore.mutually_consented(principal.pseudonym, peer)
-    revealed = _principals.pseudonym_to_name(peer) if mutual else None
+    card = None
+    if mutual:
+        contacts = _contacts()
+        card = _peer_card(peer, contacts)
+        contacts.close()
     mstore.close()
-    return {"consented": True, "mutual": mutual, "peer_revealed": revealed}
+    return {"consented": True, "mutual": mutual,
+            "peer_revealed": card.get("name") if card else None, "peer_contact": card}
+
+
+@app.get("/api/contact")
+async def get_contact(principal: Principal = Depends(current_principal)):
+    _need(principal, Permission.VIEW_OWN)
+    contacts = _contacts()
+    card = contacts.get(principal.pseudonym) or (principal.contact or {})
+    contacts.close()
+    return {"contact": card}
+
+
+@app.post("/api/contact")
+async def set_contact(request: Request, principal: Principal = Depends(current_principal)):
+    _need(principal, Permission.VIEW_OWN)
+    from abenlux.developer.contacts import clean_card
+    body = await request.json()
+    contacts = _contacts()
+    saved = contacts.set(principal.pseudonym, clean_card(body))
+    contacts.close()
+    return {"contact": saved}
 
 
 @app.get("/api/report")

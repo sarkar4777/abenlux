@@ -253,12 +253,16 @@ async function loadDeveloper(){
   const ms = me.collaboration_matches||[];
   if(!ms.length){ $("#collab").innerHTML = '<div class="muted">No collaboration matches yet. When someone works on a similar problem, a double-blind suggestion appears here.</div>'; return; }
   $("#collab").innerHTML = ms.map(m=>{
-    const who = m.peer_revealed ? `<b>${m.peer_revealed}</b>` : "a colleague (hidden)";
+    const c = m.peer_contact;
+    const handles = c ? ["slack","teams","email","github"].filter(k=>c[k]).map(k=>`${k}: ${c[k]}`).join(" · ") : "";
+    const who = c ? `<b>${c.name||m.peer_revealed}</b>${handles?` <span class="muted">(${handles})</span>`:""}` : "a colleague (hidden)";
     const verb = m.mode==="solved_reuse" ? "already solved something close to" : "is working on";
+    const action = c ? '<span class="save">intro made - reach out</span>'
+      : (m.you_requested ? '<span class="muted">requested · waiting on them</span>'
+        : `<button class="consent" onclick="consent(${m.id})">Request intro</button>`);
     return `<div class="feed-item"><div class="kind collab">${m.mode.replace("_"," ")}</div>
       <div>${who} ${verb} <b>${m.topic}</b> <span class="muted">· similarity ${m.similarity}</span></div>
-      <div>${m.peer_revealed ? '<span class="save">intro made</span>' :
-        `<button class="consent" onclick="consent(${m.id})">Request intro</button>`}</div></div>`;
+      <div>${action}</div></div>`;
   }).join("");
 }
 

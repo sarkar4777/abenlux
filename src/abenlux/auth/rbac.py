@@ -55,6 +55,7 @@ class Principal:
     display_name: str
     role: Role
     pseudonym: str
+    contact: dict | None = None   # static fallback handles (email/slack/teams), shared only on mutual consent
 
     @property
     def permissions(self) -> set[Permission]:

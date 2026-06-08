@@ -18,6 +18,10 @@ class Settings:
     anthropic_upstream: str = os.getenv("ABEN_ANTHROPIC_UPSTREAM", "https://api.anthropic.com")
     openai_upstream: str = os.getenv("ABEN_OPENAI_UPSTREAM", "https://api.openai.com")
     google_upstream: str = os.getenv("ABEN_GOOGLE_UPSTREAM", "https://generativelanguage.googleapis.com")
+    # Azure OpenAI host (resource endpoint or an APIM front), e.g. https://my-res.openai.azure.com.
+    # Azure puts the deployment in the path and authenticates with an api-key header, so it gets its
+    # own upstream and gateway route. None unless an org runs Azure OpenAI.
+    azure_upstream: str | None = os.getenv("ABEN_AZURE_UPSTREAM") or None
     hmac_key: str = os.getenv("ABEN_HMAC_KEY", "dev-key-change-me")
     db_path: str = os.getenv("ABEN_DB", "abenlux.db")
     kg_path: str | None = os.getenv("ABEN_KG") or None

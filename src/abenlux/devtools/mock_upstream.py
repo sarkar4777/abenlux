@@ -72,25 +72,31 @@ async def anthropic(request: Request):
     })
 
 
+@app.post("/openai/deployments/{deployment}/chat/completions")
+async def azure_openai(deployment: str, request: Request):
+    # Azure OpenAI shape: deployment in the path, OpenAI-compatible response body. the reported model
+    # echoes the deployment so pricing resolves the same way a real Azure response would.
+    return await openai(request, model=deployment)
+
+
 @app.post("/v1/chat/completions")
-async def openai(request: Request):
+async def openai(request: Request, model: str = "gpt-5.5"):
     inp, out, _ = _usage(request)
     body = await request.json()
     if body.get("stream"):
+        chunk = ('data: {{"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"{m}",'
+                 '"choices":[{{"index":0,"delta":{d},"finish_reason":{fr}}}]}}\n\n')
         sse = (
-            'data: {"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"gpt-5.5",'
-            '"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
-            'data: {"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"gpt-5.5",'
-            '"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n'
-            'data: {"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"gpt-5.5",'
-            '"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
-            'data: {"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"gpt-5.5","choices":[],'
+            chunk.format(m=model, d='{"role":"assistant","content":"Hello"}', fr="null")
+            + chunk.format(m=model, d='{"content":" world"}', fr="null")
+            + chunk.format(m=model, d="{}", fr='"stop"')
+            + f'data: {{"id":"chatcmpl_mock","object":"chat.completion.chunk","model":"{model}","choices":[],'
             f'"usage":{{"prompt_tokens":{inp},"completion_tokens":{out},"total_tokens":{inp+out}}}}}\n\n'
-            'data: [DONE]\n\n'
+            + 'data: [DONE]\n\n'
         )
         return _sse(sse)
     return JSONResponse({
-        "id": "chatcmpl_mock", "object": "chat.completion", "model": "gpt-5.5",
+        "id": "chatcmpl_mock", "object": "chat.completion", "model": model,
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello world"}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": inp + out},
     })

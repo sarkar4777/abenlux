@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-178%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-179%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -87,7 +87,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 178 tests
+make test             # 179 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -186,6 +186,7 @@ exact copy-paste setup for your tool and OS.** Concretely:
 | **Gemini CLI** | `gemini --telemetry --telemetry-otlp-endpoint=http://127.0.0.1:8088` |
 | **aider** | `ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider`  (OpenAI models: `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`) |
 | **opencode · Crush · Pi · Droid · ForgeCode · Goose** | export `ANTHROPIC_BASE_URL=http://127.0.0.1:8088` (or `OPENAI_BASE_URL=http://127.0.0.1:8088/v1`), then run the tool |
+| **Azure OpenAI** (any tool) | start the agent with your Azure host as upstream: `ABEN_AZURE_UPSTREAM=https://YOUR-RESOURCE.openai.azure.com abenlux gateway`, then set the tool's `azure_endpoint` to `http://127.0.0.1:8088`. The agent forwards your `api-key` header and `api-version` query untouched. |
 | **Cline · Roo · Kilo** (VS Code) | in the extension's provider settings, set **Base URL** to `http://127.0.0.1:8088` |
 | **Continue** (VS Code) | in `~/.continue/config.json`, set the model's `apiBase` to `http://127.0.0.1:8088/v1` |
 | **Cursor agent · Copilot inline** | nothing on the device — these assemble the prompt server-side, so IT pulls usage via the vendor admin API (`abenlux sync-cursor`) |
@@ -308,12 +309,12 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-178 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
-Anthropic and OpenAI SDKs driven through a live gateway**, a self-learning loop test, and a Playwright
-browser test of every dashboard screen and role.
+179 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, a self-learning loop test,
+and a Playwright browser test of every dashboard screen and role.
 
 ```bash
-make test       # 178 tests
+make test       # 179 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

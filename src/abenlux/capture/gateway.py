@@ -207,7 +207,7 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         pass
 
 
-async def _proxy(request: Request, provider: Provider, path: str) -> Response:
+async def _proxy(request: Request, provider: Provider, path: str, upstream: str | None = None) -> Response:
     body = await request.body()
     try:
         req_json = json.loads(body) if body else {}
@@ -216,7 +216,7 @@ async def _proxy(request: Request, provider: Provider, path: str) -> Response:
     streamed = bool(req_json.get("stream"))
     overrides = _work_overrides(request.headers)
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
-    url = f"{_UPSTREAMS[provider]}{path}"
+    url = f"{upstream or _UPSTREAMS[provider]}{path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"
     started = time.perf_counter()
@@ -256,6 +256,21 @@ async def anthropic_messages(request: Request):
 @app.post("/v1/chat/completions")
 async def openai_chat(request: Request):
     return await _proxy(request, Provider.OPENAI, "/v1/chat/completions")
+
+
+@app.post("/openai/deployments/{deployment}/chat/completions")
+async def azure_openai_chat(request: Request, deployment: str):
+    # Azure OpenAI: the deployment lives in the path, auth is an api-key header, and api-version is
+    # a query param - a different shape from vanilla OpenAI, but the response body is OpenAI-compatible
+    # so the same adapter parses it. Azure is a top-tier enterprise provider, it gets a first-class route.
+    if not SETTINGS.azure_upstream:
+        return JSONResponse(
+            {"error": "Azure OpenAI capture is not configured. Set ABEN_AZURE_UPSTREAM to your "
+                      "Azure resource or APIM host (e.g. https://my-resource.openai.azure.com)."},
+            status_code=503,
+        )
+    return await _proxy(request, Provider.OPENAI, f"/openai/deployments/{deployment}/chat/completions",
+                        upstream=SETTINGS.azure_upstream)
 
 
 @app.post("/v1beta/models/{model_path:path}")

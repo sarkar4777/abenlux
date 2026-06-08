@@ -47,6 +47,7 @@ def gateway_url(tmp_path_factory):
         ABEN_DB=db, ABEN_HMAC_KEY="sdk-key", ABEN_ACTOR="alice@corp.com",
         ABEN_ANTHROPIC_UPSTREAM=f"http://127.0.0.1:{mock_port}",
         ABEN_OPENAI_UPSTREAM=f"http://127.0.0.1:{mock_port}",
+        ABEN_AZURE_UPSTREAM=f"http://127.0.0.1:{mock_port}",
         ABEN_KG="", ABEN_COLLECTOR_URL="",
     )
     procs = [
@@ -99,6 +100,24 @@ def test_real_openai_sdk_through_gateway(gateway_url):
             usage = c.usage
     assert text == "Hello world"
     assert usage.prompt_tokens == 1820 and usage.completion_tokens == 1820 // 8
+
+
+def test_real_azure_openai_sdk_through_gateway(gateway_url):
+    # Azure OpenAI has its own path/auth shape (deployment in path, api-key header, api-version query).
+    # the genuine AzureOpenAI SDK must work through the gateway with a one-line base_url change.
+    url, db = gateway_url
+    az = openai.AzureOpenAI(api_key="dummy", azure_endpoint=url, api_version="2024-10-01-preview")
+    resp = az.chat.completions.create(
+        model="gpt-4o",  # the Azure deployment name -> lands in the path
+        messages=[{"role": "user", "content": "migrate the ACME billing schema"}],
+        extra_headers={"X-Aben-Branch": "feature/ACME-77-migrate", "X-Aben-Tool": "azure-openai"})
+    assert resp.choices[0].message.content == "Hello world"
+    assert resp.model == "gpt-4o"                       # deployment echoed -> pricing resolves
+    assert resp.usage.prompt_tokens == 1820
+
+    time.sleep(1.0)  # let the gateway's BackgroundTask capture complete
+    raw = open(db, "rb").read()
+    assert b"ACME billing" not in raw                   # prompt content never persisted
 
 
 def test_mock_usage_honors_input_header(gateway_url):

@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-203%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-233%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -75,6 +75,8 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 | 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
 | 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
 | 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers — paired on **keyphrase topic vectors** with an **objective-aware** bar, so two people on the same problem match even when phrased differently, and generic shared vocabulary doesn't. Precision-first (a false pairing is worse than a miss): **100% precision** on the labelled corpus. Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
+| ♻️ **Reuse-Yield Ledger** | Most tools only count money *spent*. This one also books money **not** spent. When the broker surfaces an already-solved pattern to someone about to re-solve it, an avoided re-solve is booked — valued at the tenant's **median cost-to-solve** for that work, **k-anonymity gated**, shown as a savings line *beside* spend, never inside it. The positive mirror of orphan waste. |
+| 🌍 **Cross-tenant Benchmark Exchange** | Tenants are org units / geographies of one org (acme-eu, acme-us, …). Compare them on **ratios only** — cost-per-1k, cache-hit, net-new share, reuse share — with **k-anonymity per tenant**, **differential-privacy** noise, and a **cohort threshold** so no tenant reads another off a too-small cohort. You get a **percentile** within the cohort, never another tenant's raw figure. "Is our US region reusing as much as EU?" answered without either side seeing the other's numbers. |
 | 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. A **background agent** (`abenlux agent install`) starts at login on Linux/macOS/Windows and runs in your own session, so collaboration matches and budget warnings reach you live, even at org scale. |
 | 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
 | 🪶 **Minimal, optional LLM** | When branch + patterns + learned vocabulary all miss, one tiny cached call (OpenAI / Azure / Claude / Gemini) with **extractive prompt compression** classifies intent for fractions of a cent. |
@@ -88,7 +90,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 203 tests
+make test             # 233 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -326,7 +328,9 @@ abenlux agent install / status / uninstall background capture agent, autostarted
 abenlux onboard <tool>                     exact setup for a tool on your OS/shell
 abenlux tiers                              the tool capability matrix
 abenlux cost <model>                       price an interaction
-abenlux report                             management spend→value report (k-anonymity gated)
+abenlux report [--tenant <id>]             management spend→value report (k-anonymity gated)
+abenlux tenant create <id> --org <org>     create an org unit / geography (tenant); `tenant list`
+abenlux benchmark [--tenant <id>]          compare your tenant vs the org cohort (k-anon, DP)
 abenlux me / watch                         your own private spend + nudges (summary / live tail)
 abenlux graph [--json]                     your developer-local knowledge graph
 abenlux collab [intro <id>]                see / act on double-blind collaboration matches
@@ -338,11 +342,13 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-203 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+233 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
-test, and a Playwright browser test of every dashboard screen and role. The supported CLI tools were
-additionally exercised end-to-end against a running gateway (see the verification note above).
+test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
+savings, DP-noised cross-tenant percentiles, and the org/residency walls), and a Playwright browser
+test of every dashboard screen and role. The supported CLI tools were additionally exercised
+end-to-end against a running gateway (see the verification note above).
 
 Two labelled accuracy corpora keep the parts management and developers rely on honest:
 
@@ -354,7 +360,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 203 tests
+make test       # 233 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

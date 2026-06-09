@@ -145,6 +145,40 @@ across a different **client** (Chinese wall) or a **data-residency** boundary. I
 handles are revealed only on a **mutual double-blind consent**, and in org mode the edge agent
 live-pushes a toast by polling `/v1/collab-status` for its own new matches.
 
+## Multi-tenancy, the Reuse-Yield Ledger, and the Benchmark Exchange
+
+A **tenant** is an org unit or geography of one org (`acme-eu`, `acme-us`). The edge stamps
+`tenant_id` on every `DerivedRecord` (from `ABEN_TENANT`, alongside `residency`), so a tenant is a
+content-free partition of the warehouse, not a separate database. `store._tenant_pred` builds the
+`WHERE tenant_id=?` fragment threaded through every aggregate (`totals`, `rollup`,
+`orphan_token_share`, `time_bounds`, `new_objectives`, `objective_window_cost`); `"default"` also
+matches `NULL` so rows written before the column existed still belong to the default tenant. The
+registry (`tenants.py`) maps `tenant_id → {org, display_name, residency}`. RBAC carries
+`Principal.tenant_id`/`org`: a principal reports **only its own tenant**, and `_resolve_report_tenant`
+lets it pull a sibling tenant **only if that tenant is in its own org** — cross-tenant *detail* never
+crosses the org wall. Cross-tenant *comparison* is the benchmark, and is the only cross-tenant surface.
+
+**Reuse-Yield Ledger** (`ledger.py`) books money **not** spent. When `_match_centrally` fires a broker
+match, `_book_avoided` records one content-free `AvoidedCostEvent` `{tenant, objective, work_type,
+cluster, estimated_avoided_usd, mode, actors, ts}`, valued at the tenant's **median cost-to-solve** for
+that objective×work_type (`store.actor_costs_for` → `estimate_avoided`: median across developers ×
+mode factor — full for solved-reuse, half for live-duplication). The dedup key is
+`tenant∷pair∷objective∷work_type∷cluster`, so re-polling a live match never double-books; a confirmed
+solved-reuse may upgrade a prior live-duplication for the same opportunity. `summary()` is **k-anonymity
+gated**: only events whose cost-to-solve was backed by ≥k developers (the `actors` count snapshotted at
+book time) are credited, so the savings line can never expose a sub-k group. It is surfaced **beside**
+spend (`/api/savings`, and `reuse_yield` on `/api/report`), never summed into it.
+
+**Cross-tenant Benchmark Exchange** (`analytics/benchmark.py`) compares tenants of one org on **ratios
+only** — `cost_per_1k_tokens`, `cache_hit_ratio`, `orphan_share`, `net_new_share`, `reuse_share`, … —
+so no absolute size leaks. Three walls: a tenant joins the cohort only if it clears **k-anonymity**
+(≥k developers); the comparison is released only above a **cohort threshold** (`k_tenants`, default 3);
+and published point ratios carry **Laplace DP** noise. A tenant's standing is a **percentile** within
+the cohort, computed on the *raw* ratios (a rank reveals only ordering — the whole point of a
+benchmark), while the displayed figures are DP-noised as defense in depth. The cohort is assembled from
+the org's registered tenants; only the unconfigured `default` org falls back to raw `distinct_tenants()`
+so a named org can never pull another org's tenants into its cohort.
+
 ## The background agent
 
 `abenlux agent install` runs the capture agent in the background, started at user login, in the
@@ -186,14 +220,16 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **203 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **233 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full
 edge→collector forward loop (`test_forwarding.py`); labelled accuracy corpora for intent and
 collaboration (`test_intent_corpus.py`, `test_collab_corpus.py`); the background agent and its per-OS
-units (`test_agent.py`); and a simulated team exercising suggestions, collaboration walls/consent, and
-drift (`test_multiuser.py`, `test_exhaustive.py`).
+units (`test_agent.py`); a simulated team exercising suggestions, collaboration walls/consent, and
+drift (`test_multiuser.py`, `test_exhaustive.py`); and the multi-tenant plane with the Reuse-Yield
+Ledger and Benchmark Exchange (`test_tenants_ledger_benchmark.py`) — tenant scoping, k-anon savings,
+DP-noised cross-tenant percentiles, and the org/residency walls (cross-org tenant access → 403).
 
 Two reproducible Docker harnesses back the claims that can't live in `make test` (they need Docker and
 real tool images): [`examples/tool-verification`](examples/tool-verification/) drives Gemini CLI,

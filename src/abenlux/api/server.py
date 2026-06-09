@@ -146,6 +146,8 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     store = _store()
     mstore = _matches()
     ledger = _ledger()
+    tenants = _tenants()
+    org_cache: dict[str, str] = {}     # tenant_id -> org, resolved once per batch (org wall in broker)
     n, rejected = 0, 0
     for d in items:
         if not isinstance(d, dict):
@@ -157,18 +159,30 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
             rec = DerivedRecord(**clean)        # a malformed/mistyped item must not 500 the whole batch
             _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
             store.insert(rec)
-            _match_centrally(rec, mstore, store, ledger)
+            _match_centrally(rec, mstore, ledger, _org_for(rec, tenants, org_cache))
         except Exception:
             rejected += 1
             continue
         n += 1
+    tenants.close()
     ledger.close()
     mstore.close()
     store.close()
     return {"ingested": n, "rejected": rejected}
 
 
-def _match_centrally(rec: DerivedRecord, mstore: MatchStore, store=None, ledger=None) -> None:
+def _org_for(rec: DerivedRecord, tenants, cache: dict) -> str:
+    # resolve a record's org from its tenant via the registry, cached per batch. an unregistered tenant
+    # (day-one / demo) resolves to "default" so single-org matching still works; a registered tenant
+    # carries its real org so the broker never introduces developers across an org boundary.
+    tenant = getattr(rec, "tenant_id", None) or "default"
+    if tenant not in cache:
+        t = tenants.get(tenant)
+        cache[tenant] = t.org if t is not None else "default"
+    return cache[tenant]
+
+
+def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: str = "default") -> None:
     # double-blind matching at the collector over content-free signals. writes one row per side,
     # each owner sees only their own. management never sees this - it is not a report.
     if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
@@ -179,25 +193,30 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore, store=None, ledger=
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
         topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
         residency=getattr(rec, "residency", None) or "eu",  # enforce the residency wall centrally
+        org=org,                                            # enforce the org wall centrally
     )
     for m in _broker.submit(sig):
         mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)
         mstore.record(m.b, m.a, m.topic, m.similarity, m.mode)
         # book the avoided re-solve: the broker just surfaced a reusable/duplicate effort, so part (or
-        # all) of a second solve is avoided. valued at the tenant's k-gated median cost-to-solve.
-        if store is not None and ledger is not None:
-            _book_avoided(rec, m, tenant, store, ledger)
+        # all) of a second solve is avoided. the dollar value is recomputed live at report time.
+        if ledger is not None:
+            _book_avoided(rec, m, tenant, ledger)
 
 
-def _book_avoided(rec: DerivedRecord, m, tenant: str, store, ledger) -> None:
-    from abenlux.ledger import AvoidedCostEvent, estimate_avoided
-    costs = store.actor_costs_for(rec.objective_id, rec.work_type, tenant=tenant)
-    if not costs:
+def _book_avoided(rec: DerivedRecord, m, tenant: str, ledger) -> None:
+    # when the knowledge graph is populated, a record may only book against a KNOWN objective - a forged
+    # or unknown objective_id from a (trusted-but-buggy) edge can't be used to inflate savings against
+    # an arbitrary scope. with no KG configured (offline/dev) we don't gate, so the demo still books.
+    from abenlux.ledger import AvoidedCostEvent
+    if _kg.objectives and rec.objective_id not in _kg.objectives:
         return
+    # book only the content-free FACT of the avoided re-solve. the dollar value and the k-gate are
+    # recomputed at read time in ledger.summary from the live derived store, so they are deterministic
+    # (no ingest-order dependence) and track the cohort as it grows. value/actors here are advisory.
     ev = AvoidedCostEvent(
         tenant_id=tenant, objective_id=rec.objective_id, work_type=rec.work_type or "unknown",
-        cluster_id=m.topic, estimated_avoided_usd=estimate_avoided(costs, m.mode),
-        mode=m.mode, actors=len(costs), ts=rec.ts,
+        cluster_id=m.topic, estimated_avoided_usd=0.0, mode=m.mode, actors=0, ts=rec.ts,
     )
     ledger.book(ev, pair=(m.a, m.b))
 
@@ -303,10 +322,11 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     scope = _resolve_report_tenant(principal, tenant)
     store = _store()
     rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg, tenant=scope)
-    store.close()
     ledger = _ledger()
-    rep["reuse_yield"] = ledger.summary(scope, k=SETTINGS.k_anon)  # avoided re-solves, beside spend
+    # avoided re-solves, recomputed live from the derived store, beside spend (never inside it)
+    rep["reuse_yield"] = ledger.summary(store, scope, k=SETTINGS.k_anon)
     ledger.close()
+    store.close()
     return rep
 
 
@@ -316,9 +336,11 @@ async def savings(tenant: str | None = None, principal: Principal = Depends(curr
     # caller's tenant (or another tenant in their org). a savings figure, shown beside spend not inside.
     _need(principal, Permission.VIEW_AGGREGATES)
     scope = _resolve_report_tenant(principal, tenant)
+    store = _store()
     ledger = _ledger()
-    out = ledger.summary(scope, k=SETTINGS.k_anon)
+    out = ledger.summary(store, scope, k=SETTINGS.k_anon)
     ledger.close()
+    store.close()
     return out
 
 
@@ -366,13 +388,14 @@ async def collab_status_for_edge(principal: Principal = Depends(current_principa
 
 
 @app.get("/api/drift")
-async def drift(principal: Principal = Depends(current_principal)):
+async def drift(tenant: str | None = None, principal: Principal = Depends(current_principal)):
     _need(principal, Permission.VIEW_AGGREGATES)
     from dataclasses import asdict
 
     from abenlux.analytics.drift import spend_trend
+    scope = _resolve_report_tenant(principal, tenant)  # never expose the org-wide cross-tenant trend
     store = _store()
-    rep = spend_trend(store)
+    rep = spend_trend(store, tenant=scope)
     store.close()
     return {"trend": asdict(rep) if rep else None}
 
@@ -410,21 +433,25 @@ async def benchmark_view(tenant: str | None = None, principal: Principal = Depen
     from abenlux.analytics.benchmark import benchmark as build_benchmark
     tenants = _tenants()
     cohort = [t.tenant_id for t in tenants.list(org=principal.org)]
-    tenants.close()
     # a single-org demo deployment (the unconfigured "default" org) has not registered tenants yet, so
     # it benchmarks over whatever tenant_ids appear in the data - useful on day one. a NAMED org never
-    # does this: pulling raw tenant_ids would risk mixing another org's tenants into the cohort, so a
-    # named org with no registered tenants compares only itself (honestly "cohort not ready").
+    # does this. even for the default org, admit a raw tenant_id ONLY if it is unregistered or already
+    # owned by THIS org, so a named org's registered tenants can never be pulled into the default cohort.
     if not cohort and principal.org == "default":
         store0 = _store()
-        cohort = store0.distinct_tenants()
+        for tid in store0.distinct_tenants():
+            owner = tenants.get(tid)
+            if owner is None or owner.org == principal.org:
+                cohort.append(tid)
         store0.close()
+    tenants.close()
     if focus not in cohort:
         cohort = cohort + [focus]
-    ledger = _ledger()
-    reuse_by_tenant = {t: ledger.summary(t, k=SETTINGS.k_anon)["reuse_avoided_usd"] for t in cohort}
-    ledger.close()
     store = _store()
+    ledger = _ledger()
+    reuse_by_tenant = {t: ledger.summary(store, t, k=SETTINGS.k_anon)["reuse_avoided_usd"]
+                       for t in cohort}
+    ledger.close()
     out = build_benchmark(
         store, tenants=cohort, focus_tenant=focus, k=SETTINGS.k_anon,
         dp_epsilon=SETTINGS.dp_epsilon, reuse_by_tenant=reuse_by_tenant,
@@ -460,6 +487,12 @@ async def create_tenant(request: Request, principal: Principal = Depends(current
     residency = redact(str(body.get("residency") or SETTINGS.residency)).text
     import time as _time
     tenants = _tenants()
+    # tenant_id is a global key. if another org already owns it, refuse - do not let one org re-create
+    # a rival's tenant_id and flip its org (which would pass the org gate and leak the rival's reports).
+    existing = tenants.get(tenant_id)
+    if existing is not None and existing.org != principal.org:
+        tenants.close()
+        raise HTTPException(status_code=409, detail="tenant_id already belongs to another org")
     saved = tenants.upsert(Tenant(
         tenant_id=tenant_id, org=principal.org, display_name=display,
         residency=residency, created_ts=_time.time(),

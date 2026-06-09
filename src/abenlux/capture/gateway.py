@@ -63,6 +63,12 @@ _embed = get_embedder()
 _classifier = get_classifier()    # optional, tiny LLM intent fallback. None unless configured.
 _learner = WorkTypeLearner()      # self-learning work-type memory, on-device, hot-reloaded
 _dev_store = open_store(SETTINGS.local_db)  # the developer's own rows -> their personal knowledge graph
+# in-place upgrade that then adopts a named tenant: claim this device's pre-tenant (NULL) rows for it,
+# so its history isn't orphaned out of tenant-scoped reports. no-op for the default tenant.
+if getattr(SETTINGS, "tenant_id", "default") != "default":
+    _store.claim_null_tenant(SETTINGS.tenant_id)
+    if _dev_store is not _store:
+        _dev_store.claim_null_tenant(SETTINGS.tenant_id)
 _kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path, embed_fn=_embed) if SETTINGS.kg_path else KnowledgeGraph()
 _history = SessionHistoryTracker()
 _feed = LocalSignalFeed()        # developer-private, on-device, never crosses to analytics

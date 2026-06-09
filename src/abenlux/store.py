@@ -235,13 +235,14 @@ class _BaseStore:
         row = self._exec("SELECT MIN(ts), MAX(ts) FROM derived" + self._and(pred), params).fetchone()
         return (row[0] or 0.0, row[1] or 0.0)
 
-    def window_stats(self, start_ts: float, end_ts: float) -> dict:
+    def window_stats(self, start_ts: float, end_ts: float, tenant: str | None = None) -> dict:
+        pred, params = self._tenant_pred(tenant)
         d = self._row(self._exec(
             "SELECT COUNT(*) events, COUNT(DISTINCT actor_pseudonym) actors, "
             "COALESCE(SUM(input_tokens+output_tokens),0) tokens, COALESCE(SUM(cost_usd),0) cost, "
             "COALESCE(SUM(CASE WHEN is_orphan=1 THEN input_tokens+output_tokens ELSE 0 END),0) orphan_tokens "
-            "FROM derived WHERE ts >= ? AND ts < ?",
-            (start_ts, end_ts),
+            "FROM derived WHERE ts >= ? AND ts < ?" + self._and(pred, "AND"),
+            (start_ts, end_ts) + params,
         ))
         d["orphan_share"] = (d["orphan_tokens"] / d["tokens"]) if d["tokens"] else 0.0
         return d
@@ -297,6 +298,22 @@ class _BaseStore:
             "FROM derived WHERE actor_pseudonym=?",
             (actor_pseudonym,),
         ))
+
+    def claim_null_tenant(self, tenant: str) -> int:
+        """assign legacy pre-tenant rows (tenant_id IS NULL) to a concrete tenant. an edge/single-tenant
+        deployment upgraded in place (the column was added by ALTER TABLE with no backfill) and then
+        pointed at a named tenant would otherwise orphan its whole history out of tenant-scoped reports,
+        since a named-tenant predicate excludes NULL. called on the edge where the tenant is known."""
+        if tenant == "default":
+            return 0                       # 'default' already absorbs NULL via the tenant predicate
+        with self._lock():
+            cur = self.conn.execute(
+                self._q("UPDATE derived SET tenant_id=? WHERE tenant_id IS NULL"), (tenant,))
+            try:
+                self.conn.commit()
+            except Exception:
+                pass                       # autocommit backends (postgres) have nothing to commit
+            return cur.rowcount or 0
 
     def _ensure_columns(self, coltypes: dict) -> None:
         # add any columns missing from an older db, so opening it upgrades the schema in place

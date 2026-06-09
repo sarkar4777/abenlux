@@ -34,14 +34,15 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 @dataclass
 class TopicSignal:
-    """An ABSTRACTED unit of work - never raw content. `client` + `residency` enforce
-    the Chinese wall."""
+    """An ABSTRACTED unit of work - never raw content. `org` + `client` + `residency` enforce
+    the isolation walls (org boundary, Chinese wall, data residency)."""
 
     actor_pseudonym: str
     topic_embedding: list[float]
     topic_label: str            # generalized, e.g. "Temporal saga for approval workflow"
     client: Optional[str] = None
     residency: str = "eu"
+    org: str = "default"        # the org this signal belongs to - two different orgs never match
     is_solved: bool = False     # part of the reusable solved-pattern corpus
 
 
@@ -70,7 +71,11 @@ class CollaborationBroker:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def _wall_ok(self, x: TopicSignal, y: TopicSignal) -> bool:
-        # never match across different clients, never across residency boundaries
+        # never match across a different ORG (two companies / two tenants of different orgs sharing one
+        # collector must never be introduced to each other), never across different clients (the
+        # Chinese wall, even when an objective carries no client tag), never across residency boundaries
+        if x.org != y.org:
+            return False
         if x.client and y.client and x.client != y.client:
             return False
         return x.residency == y.residency

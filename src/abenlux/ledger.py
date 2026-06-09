@@ -3,22 +3,25 @@ Reuse-Yield Ledger. Most cost tools only ever count money SPENT. This one also b
 the avoided cost of re-solving a problem the org already solved, captured the moment the collaboration
 broker surfaces a reusable pattern (or a live duplicate) to a developer who was about to start it.
 
-The mechanism is honest and content-free:
+The ledger persists only the *fact* of an avoided re-solve (an opportunity), never a frozen dollar
+figure. The money is computed at READ time from the current derived data, so it is deterministic
+(independent of ingest order) and it tracks the cohort as it grows - a re-solve that was below k
+developers when first seen is credited later, automatically, once enough people have solved that work.
 
-  * cost-to-solve - for an objective x work_type, take each developer's total spend on it and use the
-    MEDIAN across developers as the org's typical cost to solve that piece of work (median, not mean,
-    so one runaway session can't inflate the estimate). this number is itself k-anonymity gated: it is
-    only credited when at least k developers have solved that work, so it is never one person's figure.
+  * opportunity - one content-free row per unique (tenant, developer-pair, objective, work_type). The
+    dedup key is exactly those stable ids (NOT the display label), so re-polling a live match - or the
+    same match arriving under a re-redacted objective label - never double-books. A confirmed
+    solved-reuse atomically upgrades a prior live-duplication for the same opportunity (higher value).
 
-  * avoided-cost event - when the broker matches two developers on the same topic, ONE content-free
-    AvoidedCostEvent is booked: {tenant, objective, work_type, cluster, estimated_avoided_usd, mode}.
-    solved-reuse (re-using an already-solved pattern) is credited at the full median cost-to-solve;
-    live-duplication (caught while both are still working) is credited at a conservative fraction,
-    because part of the second effort has usually already happened. each unique pair x objective x
-    work_type is booked once - re-polling the same live match never double-counts.
+  * cost-to-solve - for an objective x work_type, take each developer's total spend on it and compute a
+    WINSORIZED MEAN across developers (trim the extremes, average the rest). This is robust to one
+    runaway session AND - unlike a bare median - is never any single developer's exact figure, so the
+    published savings can't be a stand-in for one person's spend. It is credited only when at least k
+    developers have solved that work, so a sub-k group's spend is never exposed.
 
-  * savings line - reports surface a k-gated "reuse avoided ~$X this period" band. it is a SAVINGS
-    estimate, presented as such, next to real spend - never mixed into the spend total.
+  * savings line - reports surface a k-gated "reuse avoided ~$X this period" band, a SAVINGS estimate
+    shown beside real spend, never summed into it. solved-reuse credits the full cost-to-solve;
+    live-duplication a conservative fraction, since part of the second effort has usually happened.
 
 Nothing here is a per-person figure or a management drill-down: it is an org/tenant aggregate of
 avoided re-solves, the positive mirror of the orphan-waste line.
@@ -45,17 +48,37 @@ def median(xs: list[float]) -> float:
     return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
 
 
+def cost_to_solve(per_actor_costs: list[float]) -> float:
+    """robust, privacy-preserving central estimate of the cost to solve a piece of work: winsorize the
+    per-developer totals (trim ~the extremes) then average. blends several developers, so it is never
+    one person's exact spend, and one runaway session can't inflate it. published only when the caller
+    has already k-gated on len(per_actor_costs) >= k, so the trimmed set always has >= 3 members."""
+    s = sorted(c for c in per_actor_costs if c)
+    n = len(s)
+    if n == 0:
+        return 0.0
+    if n < 4:
+        # too few to trim - the k-gate (>= 5) prevents this from ever being published, but keep a sane
+        # value for internal/test use. mean, not a single datapoint.
+        return sum(s) / n
+    trim = max(1, n // 10)            # drop ~10% from each end
+    core = s[trim:n - trim]
+    return sum(core) / len(core)
+
+
 @dataclass(frozen=True)
 class AvoidedCostEvent:
-    """one booked re-solve avoided. content-free: ids and slugs only, no prompt, no person."""
+    """one booked re-solve avoided (an opportunity). content-free: ids and slugs only, no prompt, no
+    person. estimated_avoided_usd / actors are advisory only - summary() recomputes both at read time
+    from the live derived data, so they never go stale and never depend on ingest order."""
 
     tenant_id: str
     objective_id: str
     work_type: str
-    cluster_id: str                 # the topic label the match clustered on
+    cluster_id: str                 # the topic label the match clustered on (display only, not keyed)
     estimated_avoided_usd: float
     mode: str                       # "solved_reuse" | "live_duplication"
-    actors: int                     # how many developers backed the cost-to-solve median (for k-gating)
+    actors: int
     ts: float
 
     def to_dict(self) -> dict:
@@ -63,9 +86,9 @@ class AvoidedCostEvent:
 
 
 def estimate_avoided(per_actor_costs: list[float], mode: str) -> float:
-    """median cost-to-solve x a mode factor. empty -> 0 (nothing to credit yet)."""
+    """winsorized cost-to-solve x a mode factor. empty -> 0 (nothing to credit yet)."""
     factor = _SOLVED_FACTOR if mode == "solved_reuse" else _LIVE_DUP_FACTOR
-    return round(median(per_actor_costs) * factor, 6)
+    return round(cost_to_solve(per_actor_costs) * factor, 6)
 
 
 def _pair_key(a: str, b: str) -> str:
@@ -73,78 +96,95 @@ def _pair_key(a: str, b: str) -> str:
     return "|".join(sorted((a, b)))
 
 
+def _dedup_key(tenant_id: str, pair: tuple[str, str], objective_id: str, work_type: str) -> str:
+    # STABLE ids only - never the display label - so label drift on the same work can't re-book it.
+    return f"{tenant_id}::{_pair_key(*pair)}::{objective_id}::{work_type}"
+
+
+def _tenant_where(tenant: str | None, ph: str) -> tuple[str, tuple]:
+    if tenant is None:
+        return "", ()
+    if tenant == "default":
+        return f" WHERE (tenant_id={ph} OR tenant_id IS NULL)", (tenant,)
+    return f" WHERE tenant_id={ph}", (tenant,)
+
+
 class LedgerStore:
-    """persisted avoided-cost events. sqlite default, postgres via dsn. dedups a unique collaboration
-    opportunity (pair x objective x work_type x cluster) so re-polling a live match can't double-book."""
+    """persisted avoided-cost OPPORTUNITIES. sqlite default, postgres via dsn. dedups a unique
+    opportunity (tenant x pair x objective x work_type) so re-polling never double-books. the dollar
+    value and k-gate are computed at READ time in summary() from the live derived store."""
 
     _ph = "?"
 
     def __init__(self, path: str | Path = "abenlux-ledger.db"):
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.execute("PRAGMA busy_timeout=5000")
-        self._ddl("REAL")
+        self._ddl()
         self._lock = threading.RLock()
 
-    def _ddl(self, real: str) -> None:
+    def _ddl(self) -> None:
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS avoided ("
             " dedup_key TEXT PRIMARY KEY, tenant_id TEXT, objective_id TEXT, work_type TEXT,"
-            f" cluster_id TEXT, estimated_avoided_usd {real}, mode TEXT, actors INTEGER, ts {real})"
+            " cluster_id TEXT, mode TEXT, ts REAL)"
         )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_tenant ON avoided(tenant_id)")
         self.conn.commit()
 
     def book(self, ev: AvoidedCostEvent, *, pair: tuple[str, str]) -> bool:
-        """book an avoided-cost event for a unique opportunity. returns True if newly booked, False if
-        this pair already booked this objective x work_type x cluster (idempotent, no double-count).
-        a solved_reuse upgrade over a prior live_duplication for the same key is allowed to overwrite,
-        because the avoided value is higher once the reuse is confirmed."""
-        key = f"{ev.tenant_id}::{_pair_key(*pair)}::{ev.objective_id}::{ev.work_type}::{ev.cluster_id}"
+        """book an avoided-re-solve opportunity. returns True if newly booked (or upgraded), False if
+        this opportunity was already booked at >= this value-tier. the mode upgrade
+        (live_duplication -> solved_reuse) is atomic via the conditional upsert, so a concurrent
+        live-duplication can never downgrade a confirmed solved-reuse."""
+        key = _dedup_key(ev.tenant_id, pair, ev.objective_id, ev.work_type)
         with self._lock:
-            row = self.conn.execute(
-                "SELECT mode FROM avoided WHERE dedup_key=?", (key,)
-            ).fetchone()
-            if row is not None and not (row[0] == "live_duplication" and ev.mode == "solved_reuse"):
-                return False
-            self.conn.execute(
-                "INSERT OR REPLACE INTO avoided "
-                "(dedup_key, tenant_id, objective_id, work_type, cluster_id, estimated_avoided_usd, "
-                " mode, actors, ts) VALUES (?,?,?,?,?,?,?,?,?)",
-                (key, ev.tenant_id, ev.objective_id, ev.work_type, ev.cluster_id,
-                 ev.estimated_avoided_usd, ev.mode, ev.actors, ev.ts),
+            # INSERT the opportunity; on conflict only the mode UPGRADE (live -> solved) updates, so the
+            # higher-value classification wins regardless of arrival order. sqlite 3.24+ upsert.
+            cur = self.conn.execute(
+                "INSERT INTO avoided (dedup_key, tenant_id, objective_id, work_type, cluster_id, "
+                "mode, ts) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(dedup_key) DO UPDATE SET mode=excluded.mode, cluster_id=excluded.cluster_id "
+                "WHERE avoided.mode='live_duplication' AND excluded.mode='solved_reuse'",
+                (key, ev.tenant_id, ev.objective_id, ev.work_type, ev.cluster_id, ev.mode, ev.ts),
             )
             self.conn.commit()
-        return True
+            return cur.rowcount > 0
 
-    def summary(self, tenant: str | None = None, *, k: int = 5) -> dict:
-        """k-gated avoided-cost rollup. only events whose cost-to-solve median was backed by >= k
-        developers are credited, so the savings line can never expose a sub-k group's spend."""
-        params: tuple = ()
-        where = ""
-        if tenant is not None:
-            if tenant == "default":
-                where = " WHERE (tenant_id=? OR tenant_id IS NULL)"
-                params = (tenant,)
-            else:
-                where = " WHERE tenant_id=?"
-                params = (tenant,)
-        rows = self.conn.execute(
-            "SELECT mode, work_type, cluster_id, estimated_avoided_usd, actors FROM avoided" + where,
-            params,
+    def _opportunities(self, tenant: str | None) -> list[tuple]:
+        where, params = _tenant_where(tenant, self._ph)
+        return self.conn.execute(
+            "SELECT tenant_id, objective_id, work_type, mode FROM avoided" + where, params
         ).fetchall()
-        credited = [r for r in rows if r[4] >= k]
-        total = round(sum(r[3] for r in credited), 2)
+
+    def summary(self, store, tenant: str | None = None, *, k: int = 5) -> dict:
+        """k-gated avoided-cost rollup, recomputed from the LIVE derived store so it never goes stale
+        and never depends on ingest order. an opportunity is credited only when its objective x
+        work_type cost-to-solve is backed by >= k developers RIGHT NOW."""
+        rows = self._opportunities(tenant)
+        # cache the per (tenant, objective, work_type) cost vector so we hit the store once per group
+        cohorts: dict[tuple, list[float]] = {}
+        total = 0.0
         by_work_type: dict[str, float] = {}
-        for r in credited:
-            # accumulate raw then round ONCE below - rounding each step drops sub-cent reuses to zero
-            by_work_type[r[1]] = by_work_type.get(r[1], 0.0) + r[3]
-        by_work_type = {w: round(v, 2) for w, v in by_work_type.items()}
+        credited = suppressed = 0
+        for tid, obj, wt, mode in rows:
+            scope = tid if tid is not None else "default"
+            ck = (scope, obj, wt)
+            if ck not in cohorts:
+                cohorts[ck] = store.actor_costs_for(obj, wt if wt != "unknown" else None, tenant=scope)
+            costs = cohorts[ck]
+            if len(costs) < k:                        # sub-k cost-to-solve -> never credited
+                suppressed += 1
+                continue
+            value = estimate_avoided(costs, mode)
+            total += value
+            by_work_type[wt] = by_work_type.get(wt, 0.0) + value
+            credited += 1
         return {
             "tenant": tenant,
-            "reuse_avoided_usd": total,
-            "events_credited": len(credited),
-            "events_suppressed": len(rows) - len(credited),  # below k, not credited
-            "by_work_type": [{"work_type": w, "avoided_usd": v}
+            "reuse_avoided_usd": round(total, 2),
+            "events_credited": credited,
+            "events_suppressed": suppressed,        # below k developers, not credited
+            "by_work_type": [{"work_type": w, "avoided_usd": round(v, 2)}
                              for w, v in sorted(by_work_type.items(), key=lambda x: -x[1])],
             "k": k,
             "note": "estimated avoided re-solves, k-anonymity gated, shown beside spend never inside it",
@@ -155,7 +195,7 @@ class LedgerStore:
 
 
 class PostgresLedgerStore(LedgerStore):
-    """Postgres backend (optional). Same dedup + k-gated summary, BIGINT/double types."""
+    """Postgres backend (optional). Same opportunity model, same read-time recompute, BIGINT/double."""
 
     _ph = "%s"
 
@@ -165,53 +205,22 @@ class PostgresLedgerStore(LedgerStore):
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS avoided ("
             " dedup_key TEXT PRIMARY KEY, tenant_id TEXT, objective_id TEXT, work_type TEXT,"
-            " cluster_id TEXT, estimated_avoided_usd DOUBLE PRECISION, mode TEXT,"
-            " actors BIGINT, ts DOUBLE PRECISION)"
+            " cluster_id TEXT, mode TEXT, ts DOUBLE PRECISION)"
         )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_tenant ON avoided(tenant_id)")
         self._lock = threading.RLock()
 
     def book(self, ev: AvoidedCostEvent, *, pair: tuple[str, str]) -> bool:
-        key = f"{ev.tenant_id}::{_pair_key(*pair)}::{ev.objective_id}::{ev.work_type}::{ev.cluster_id}"
+        key = _dedup_key(ev.tenant_id, pair, ev.objective_id, ev.work_type)
         with self._lock:
-            row = self.conn.execute("SELECT mode FROM avoided WHERE dedup_key=%s", (key,)).fetchone()
-            if row is not None and not (row[0] == "live_duplication" and ev.mode == "solved_reuse"):
-                return False
-            self.conn.execute(
+            cur = self.conn.execute(
                 "INSERT INTO avoided (dedup_key, tenant_id, objective_id, work_type, cluster_id, "
-                "estimated_avoided_usd, mode, actors, ts) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT (dedup_key) DO UPDATE SET mode=EXCLUDED.mode, "
-                "estimated_avoided_usd=EXCLUDED.estimated_avoided_usd, actors=EXCLUDED.actors",
-                (key, ev.tenant_id, ev.objective_id, ev.work_type, ev.cluster_id,
-                 ev.estimated_avoided_usd, ev.mode, ev.actors, ev.ts),
+                "mode, ts) VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (dedup_key) DO UPDATE SET mode=EXCLUDED.mode, cluster_id=EXCLUDED.cluster_id "
+                "WHERE avoided.mode='live_duplication' AND EXCLUDED.mode='solved_reuse'",
+                (key, ev.tenant_id, ev.objective_id, ev.work_type, ev.cluster_id, ev.mode, ev.ts),
             )
-        return True
-
-    def summary(self, tenant: str | None = None, *, k: int = 5) -> dict:
-        params: tuple = ()
-        where = ""
-        if tenant is not None:
-            where = " WHERE (tenant_id=%s OR tenant_id IS NULL)" if tenant == "default" else " WHERE tenant_id=%s"
-            params = (tenant,)
-        rows = self.conn.execute(
-            "SELECT mode, work_type, cluster_id, estimated_avoided_usd, actors FROM avoided" + where,
-            params,
-        ).fetchall()
-        credited = [r for r in rows if r[4] >= k]
-        total = round(sum(r[3] for r in credited), 2)
-        by_work_type: dict[str, float] = {}
-        for r in credited:
-            # accumulate raw then round ONCE below - rounding each step drops sub-cent reuses to zero
-            by_work_type[r[1]] = by_work_type.get(r[1], 0.0) + r[3]
-        by_work_type = {w: round(v, 2) for w, v in by_work_type.items()}
-        return {
-            "tenant": tenant, "reuse_avoided_usd": total, "events_credited": len(credited),
-            "events_suppressed": len(rows) - len(credited),
-            "by_work_type": [{"work_type": w, "avoided_usd": v}
-                             for w, v in sorted(by_work_type.items(), key=lambda x: -x[1])],
-            "k": k,
-            "note": "estimated avoided re-solves, k-anonymity gated, shown beside spend never inside it",
-        }
+            return cur.rowcount > 0
 
 
 def open_ledger(dsn: str | Path) -> LedgerStore:

@@ -3,7 +3,7 @@ Cross-tenant Benchmark Exchange. Tenants of one org (its geographies / business 
 how they compare - "is our US region burning more per 1k tokens than EU, are we reusing as much, is
 our spend going to net-new or maintenance" - WITHOUT either side seeing the other's raw numbers.
 
-The whole design is ratios, not absolutes, behind three privacy walls:
+The whole design is ratios, not absolutes, behind several privacy walls:
 
   * ratios only - every metric is a unit-economics RATIO (cost per 1k tokens, cache-hit share, net-new
     share, ...). A ratio carries no tenant size, so comparing them leaks no headcount or total spend.
@@ -11,13 +11,23 @@ The whole design is ratios, not absolutes, behind three privacy walls:
   * k-anonymity per tenant - a tenant is admitted to the cohort only if it clears k distinct developers
     (default k>=5). A 2-person region never publishes a ratio that could be backed out to a person.
 
-  * cohort threshold + DP - the comparison is released only when at least K_TENANTS tenants qualify, so
-    one tenant can't read another off a 2-tenant cohort. Published ratios carry Laplace DP noise, and
-    a tenant's standing is given as a PERCENTILE within the cohort, never another tenant's raw figure.
+  * cohort threshold - the comparison is released only when at least K_TENANTS tenants qualify.
 
-What a caller gets back: their own (noised) ratio vector, the cohort distribution per metric (min /
-median / max + their percentile), and a readiness panel that says exactly why a comparison is or is
-not available yet. The single-tenant case returns the ratio vector plus "cohort not ready", honestly.
+  * order statistics withheld for small cohorts - cohort_min/median/max are a tenant's near-exact raw
+    ratios when the cohort is tiny (for 3 tenants, min/median/max ARE the three tenants' values). So we
+    publish extremes only above ORDER_STATS_FLOOR tenants and the median only above MEDIAN_FLOOR, where
+    each becomes an aggregate over several tenants rather than one named tenant's figure. Below that, a
+    caller gets only their own value and their PERCENTILE - which reveals rank, the point of a
+    benchmark, and nothing else.
+
+  * consistency + DP - all released figures for a metric (your value, min, median, max, and the
+    percentile) are derived from ONE Laplace-noised, sorted cohort series, so the row is internally
+    consistent (you always sits within [min,max], min<=median<=max) and DP-perturbed as defense in
+    depth, while the percentile still ranks you within the cohort.
+
+A degenerate (unpriced) tenant - one whose model isn't in the price table, so its priced cost is 0 -
+is excluded from the COST-denominated metrics (it would otherwise look "free" and collapse the cohort
+min), while still participating in token/event-denominated metrics like cache-hit and retry rate.
 """
 from __future__ import annotations
 
@@ -28,25 +38,34 @@ from abenlux.privacy.pseudonymize import KAnonymityGate
 
 # default: at least this many qualifying tenants before any cross-tenant comparison is released.
 DEFAULT_K_TENANTS = 3
+# release cohort min/max only above this many qualifying tenants (below it they are near-raw values),
+# and the median only above MEDIAN_FLOOR (so it is an interior average, not one tenant's raw point).
+ORDER_STATS_FLOOR = 5
+MEDIAN_FLOOR = 4
 
-# each metric: key, label, and whether a HIGHER value is better (drives percentile + UI coloring).
+# each metric: key, label, whether HIGHER is better, and whether it is COST-denominated (excluded for
+# a tenant whose priced cost is 0, since a degenerate denominator would publish a misleading ratio).
 METRICS = [
-    ("cost_per_1k_tokens", "Cost per 1k tokens", False),
-    ("cache_hit_ratio", "Prompt-cache hit ratio", True),
-    ("cache_recoverable_share", "Recoverable resent-history share", False),
-    ("orphan_share", "Unattributed (orphan) share", False),
-    ("net_new_share", "Net-new investment share", True),
-    ("maintenance_share", "Maintenance share", False),
-    ("retry_rate", "Retry-loop rate", False),
-    ("reuse_share", "Reuse-yield share of spend", True),
+    ("cost_per_1k_tokens", "Cost per 1k tokens", False, True),
+    ("cache_hit_ratio", "Prompt-cache hit ratio", True, False),
+    ("cache_recoverable_share", "Recoverable resent-history share", False, False),
+    ("orphan_share", "Unattributed (orphan) share", False, False),
+    ("net_new_share", "Net-new investment share", True, True),
+    ("maintenance_share", "Maintenance share", False, True),
+    ("retry_rate", "Retry-loop rate", False, False),
+    ("reuse_share", "Reuse-yield share of spend", True, True),
 ]
+
+# the DP perturbation on released figures. the authoritative comparison is the percentile, derived from
+# the same noised series so the row stays consistent; the noise is defense in depth on the point values.
+_DP_SENSITIVITY = 0.003
 
 
 @dataclass
 class TenantVector:
     tenant_id: str
     actors: int
-    ratios: dict          # metric_key -> value
+    ratios: dict          # metric_key -> value or None (None = not applicable, e.g. unpriced for cost)
     qualifies: bool       # clears k-anonymity, so it may join the cohort
 
 
@@ -55,9 +74,9 @@ def _ratio(num: float, den: float) -> float:
 
 
 def tenant_vector(store, tenant: str, *, k: int = 5, reuse_avoided_usd: float = 0.0) -> TenantVector:
-    """compute one tenant's content-free ratio vector from the derived store. reuse_avoided_usd is the
-    tenant's k-gated reuse-yield (from the ledger), folded in as a share of spend so a tenant that
-    reuses heavily scores well on the dimension that most sets this product apart."""
+    """compute one tenant's content-free ratio vector from the derived store. cost-denominated metrics
+    are None when the tenant has no PRICED cost (unpriced model), so a degenerate 0 never pollutes the
+    cohort. reuse_avoided_usd (the tenant's k-gated reuse-yield) folds in as a share of spend."""
     totals = store.totals(tenant=tenant)
     tokens = totals["tokens"] or 0
     cost = totals["cost"] or 0.0
@@ -65,6 +84,7 @@ def tenant_vector(store, tenant: str, *, k: int = 5, reuse_avoided_usd: float = 
     cache_read = totals.get("cache_read", 0)
     input_tokens = totals.get("input_tokens", 0)
     uncached_dup = max(0, totals["dup_tokens"] - cache_read)
+    priced = cost > 0                       # any priced spend at all; if not, cost metrics are N/A
 
     net_new = maintenance = 0.0
     for r in store.rollup("work_type", tenant=tenant):
@@ -74,21 +94,31 @@ def tenant_vector(store, tenant: str, *, k: int = 5, reuse_avoided_usd: float = 
             maintenance += r["cost"]
 
     ratios = {
-        "cost_per_1k_tokens": _ratio(cost, tokens / 1000.0),
+        "cost_per_1k_tokens": _ratio(cost, tokens / 1000.0) if priced else None,
         "cache_hit_ratio": _ratio(cache_read, cache_read + input_tokens),
         "cache_recoverable_share": _ratio(uncached_dup, tokens),
         "orphan_share": round(store.orphan_token_share(tenant=tenant), 6),
-        "net_new_share": _ratio(net_new, cost),
-        "maintenance_share": _ratio(maintenance, cost),
+        "net_new_share": _ratio(net_new, cost) if priced else None,
+        "maintenance_share": _ratio(maintenance, cost) if priced else None,
         "retry_rate": _ratio(totals["retries"], events),
-        "reuse_share": _ratio(reuse_avoided_usd, cost + reuse_avoided_usd),
+        "reuse_share": _ratio(reuse_avoided_usd, cost + reuse_avoided_usd) if priced else None,
     }
     actors = totals["actors"]
     return TenantVector(tenant, actors, ratios, qualifies=actors >= k)
 
 
-def _percentile(value: float, others: list[float], higher_is_better: bool) -> float:
-    """fraction of the cohort this tenant beats on the good direction, in [0,1]. ties count as half."""
+def _median(sorted_xs: list[float]) -> float:
+    n = len(sorted_xs)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return sorted_xs[mid] if n % 2 else (sorted_xs[mid - 1] + sorted_xs[mid]) / 2.0
+
+
+def _percentile_in(value: float, series: list[float], higher_is_better: bool) -> float:
+    """fraction of the OTHER tenants this value beats on the good direction, in [0,1]. computed on the
+    same noised series shown to the user, so the rank is consistent with the displayed figures."""
+    others = [x for x in series if x is not value]
     if not others:
         return 0.0
     wins = sum((value > o) if higher_is_better else (value < o) for o in others)
@@ -104,10 +134,13 @@ def benchmark(
     tenants of one org). content-free, k-anonymized, DP-noised, and gated on a minimum cohort size."""
     gate = KAnonymityGate(k=k, dp_epsilon=dp_epsilon)
     reuse_by_tenant = reuse_by_tenant or {}
-    vectors = [
-        tenant_vector(store, t, k=k, reuse_avoided_usd=reuse_by_tenant.get(t, 0.0))
-        for t in tenants
-    ]
+    seen: set = set()
+    vectors = []
+    for t in tenants:                                  # de-dup defensively, preserve order
+        if t in seen:
+            continue
+        seen.add(t)
+        vectors.append(tenant_vector(store, t, k=k, reuse_avoided_usd=reuse_by_tenant.get(t, 0.0)))
     qualifying = [v for v in vectors if v.qualifies]
     focus = next((v for v in vectors if v.tenant_id == focus_tenant), None)
 
@@ -122,33 +155,40 @@ def benchmark(
         "reason": _readiness_reason(focus, qualifying, k_tenants, k),
     }
 
-    # the focus tenant always gets its OWN ratio vector back (it's their own data), DP-noised so even a
-    # screenshot doesn't expose an exact figure. the cohort comparison is only filled in when ready.
+    # the focus tenant always gets its OWN (noised) ratio vector back - it is their own data.
     focus_ratios = _noise_ratios(focus.ratios, gate) if focus else {}
 
     comparison = []
     if ready:
-        for key, label, higher in METRICS:
-            cohort_vals = [v.ratios[key] for v in qualifying]
-            others = [v.ratios[key] for v in qualifying if v.tenant_id != focus_tenant]
-            cohort_vals_sorted = sorted(cohort_vals)
-            comparison.append({
+        for key, label, higher, _cost in METRICS:
+            # build ONE noised series per metric over the qualifying tenants that HAVE this metric
+            # (cost metrics drop unpriced tenants). everything below derives from this one series, so
+            # you/min/median/max and the percentile are mutually consistent and monotone.
+            raw = [(v.tenant_id, v.ratios[key]) for v in qualifying if v.ratios.get(key) is not None]
+            noised = {tid: _noise(val, gate) for tid, val in raw}
+            series = sorted(noised.values())
+            you = noised.get(focus_tenant)              # None if focus lacks this metric (unpriced)
+            n = len(series)
+            row = {
                 "metric": key, "label": label, "higher_is_better": higher,
-                "you": focus_ratios.get(key),
-                "cohort_min": round(_noise(min(cohort_vals), gate), 6),
-                "cohort_median": round(_noise(_median(cohort_vals_sorted), gate), 6),
-                "cohort_max": round(_noise(max(cohort_vals), gate), 6),
-                "your_percentile": _percentile(focus.ratios[key], others, higher),
-            })
+                "you": round(you, 6) if you is not None else None,
+                "cohort_n": n,
+                "cohort_min": round(series[0], 6) if n >= ORDER_STATS_FLOOR else None,
+                "cohort_max": round(series[-1], 6) if n >= ORDER_STATS_FLOOR else None,
+                "cohort_median": round(_median(series), 6) if n >= MEDIAN_FLOOR else None,
+                "your_percentile": _percentile_in(you, series, higher) if you is not None and n > 1 else None,
+            }
+            comparison.append(row)
 
     return {
-        "org_cohort": [t for t in tenants],
+        "org_cohort": [v.tenant_id for v in vectors],
         "focus_tenant": focus_tenant,
         "readiness": readiness,
         "your_ratios": focus_ratios,
         "comparison": comparison,
         "privacy": {"k": k, "k_tenants": k_tenants, "dp_epsilon": dp_epsilon,
-                    "note": "ratios only, k-anon per tenant, DP-noised, released only above the cohort threshold"},
+                    "order_stats_floor": ORDER_STATS_FLOOR, "median_floor": MEDIAN_FLOOR,
+                    "note": "ratios only, k-anon per tenant, DP-noised, order stats withheld for small cohorts"},
     }
 
 
@@ -162,26 +202,10 @@ def _readiness_reason(focus, qualifying, k_tenants: int, k: int) -> str:
     return "cohort ready"
 
 
-def _median(sorted_xs: list[float]) -> float:
-    n = len(sorted_xs)
-    if n == 0:
-        return 0.0
-    mid = n // 2
-    return sorted_xs[mid] if n % 2 else (sorted_xs[mid - 1] + sorted_xs[mid]) / 2.0
-
-
-# the published point ratios carry a light DP perturbation as defense in depth. the AUTHORITATIVE
-# comparison is `your_percentile`, computed on the raw ratios - a rank within the cohort reveals only
-# ordering (the whole point of a benchmark), never another tenant's figure. sensitivity is kept small
-# because a per-tenant ratio already averages over many records, so one record's influence is tiny.
-_DP_SENSITIVITY = 0.003
-
-
 def _noise(value: float, gate: KAnonymityGate) -> float:
     # ratios live in [0,~]. clamp negatives to 0 so noise can't print a nonsensical sub-zero rate.
-    noised = value + gate.laplace_noise(sensitivity=_DP_SENSITIVITY)
-    return max(0.0, noised)
+    return max(0.0, value + gate.laplace_noise(sensitivity=_DP_SENSITIVITY))
 
 
 def _noise_ratios(ratios: dict, gate: KAnonymityGate) -> dict:
-    return {k: round(_noise(v, gate), 6) for k, v in ratios.items()}
+    return {k: (round(_noise(v, gate), 6) if v is not None else None) for k, v in ratios.items()}

@@ -77,7 +77,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     cache_base = cache_read + totals.get("input_tokens", 0)
     cache_hit_ratio = round(cache_read / cache_base, 4) if cache_base else 0.0
 
-    trend = spend_trend(store)  # recent vs prior window, None if not enough history
+    trend = spend_trend(store, tenant=tenant)  # recent vs prior window, None if not enough history
 
     budgets = []
     if kg is not None:

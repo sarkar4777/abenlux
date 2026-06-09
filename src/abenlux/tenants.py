@@ -48,8 +48,15 @@ class TenantStore:
         self._lock = threading.RLock()
 
     def upsert(self, t: Tenant) -> Tenant:
-        # creating a tenant is idempotent on tenant_id - re-running the same create updates its metadata
+        # creating a tenant is idempotent on tenant_id - re-running the same create updates its metadata.
+        # tenant_id is a GLOBAL key (the derived table scopes on tenant_id alone, no org column), so an
+        # id, once owned by an org, can never be reassigned to another org here - otherwise a second org
+        # could re-create a rival's tenant_id, flip its org, and read its reports through the org gate.
         with self._lock:
+            existing = self.get(t.tenant_id)
+            if existing is not None and existing.org != t.org:
+                raise ValueError(
+                    f"tenant_id {t.tenant_id!r} already belongs to org {existing.org!r}")
             self.conn.execute(
                 "INSERT OR REPLACE INTO tenants (tenant_id, org, display_name, residency, created_ts) "
                 "VALUES (?,?,?,?,?)",
@@ -106,10 +113,17 @@ class PostgresTenantStore(TenantStore):
 
     def upsert(self, t: Tenant) -> Tenant:
         with self._lock:
+            existing = self.get(t.tenant_id)
+            if existing is not None and existing.org != t.org:
+                raise ValueError(
+                    f"tenant_id {t.tenant_id!r} already belongs to org {existing.org!r}")
+            # the WHERE clause is a second, atomic guard against a concurrent cross-org reassignment:
+            # the conflict update only ever fires when the owning org is unchanged.
             self.conn.execute(
                 "INSERT INTO tenants (tenant_id, org, display_name, residency, created_ts) "
                 "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (tenant_id) DO UPDATE SET "
-                "org=EXCLUDED.org, display_name=EXCLUDED.display_name, residency=EXCLUDED.residency",
+                "display_name=EXCLUDED.display_name, residency=EXCLUDED.residency "
+                "WHERE tenants.org=EXCLUDED.org",
                 (t.tenant_id, t.org, t.display_name, t.residency, t.created_ts),
             )
         return t

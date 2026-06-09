@@ -213,12 +213,12 @@ def cmd_report(args) -> None:
     tenant = getattr(args, "tenant", None) or SETTINGS.tenant_id
     store = open_store(SETTINGS.db_path)
     rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg, tenant=tenant)
-    store.close()
     from abenlux.ledger import open_ledger
     import os as _os
     ledger = open_ledger(_os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
-    rep["reuse_yield"] = ledger.summary(tenant, k=SETTINGS.k_anon)
+    rep["reuse_yield"] = ledger.summary(store, tenant, k=SETTINGS.k_anon)
     ledger.close()
+    store.close()
     if args.json:
         print(json.dumps(rep, indent=2))
         return
@@ -522,7 +522,7 @@ def cmd_benchmark(args) -> None:
     if focus not in cohort:
         cohort = cohort + [focus]
     ledger = open_ledger(_os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
-    reuse = {t: ledger.summary(t, k=SETTINGS.k_anon)["reuse_avoided_usd"] for t in cohort}
+    reuse = {t: ledger.summary(store, t, k=SETTINGS.k_anon)["reuse_avoided_usd"] for t in cohort}
     ledger.close()
     out = build_benchmark(store, tenants=cohort, focus_tenant=focus, k=SETTINGS.k_anon,
                           dp_epsilon=SETTINGS.dp_epsilon, reuse_by_tenant=reuse)

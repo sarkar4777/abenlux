@@ -54,15 +54,17 @@ def spend_trend(
     split_ts: float | None = None,
     orphan_abs_threshold: float = 0.10,   # +10 percentage points of orphan share -> alert
     cost_rel_threshold: float = 0.25,     # +25% spend window-over-window -> alert
+    tenant: str | None = None,            # scope the trend to one tenant (None = org-wide / legacy)
 ) -> DriftReport | None:
     """compare the recent half of the data against the prior half. returns None if there isn't
-    enough history (a single window) to make a comparison."""
-    lo, hi = store.time_bounds()
+    enough history (a single window) to make a comparison. tenant scopes the trend so a tenant report
+    never shows the org-wide (cross-tenant) spend/actor figures."""
+    lo, hi = store.time_bounds(tenant=tenant)
     if hi <= lo:
         return None
     mid = split_ts if split_ts is not None else (lo + hi) / 2.0
-    prior = store.window_stats(lo, mid)
-    recent = store.window_stats(mid, hi + 1e-9)  # include the max-ts row in the recent window
+    prior = store.window_stats(lo, mid, tenant=tenant)
+    recent = store.window_stats(mid, hi + 1e-9, tenant=tenant)  # include the max-ts row in the recent window
     if prior["events"] == 0 or recent["events"] == 0:
         return None
     return DriftReport(

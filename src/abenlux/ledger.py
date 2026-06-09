@@ -14,10 +14,12 @@ developers when first seen is credited later, automatically, once enough people 
     solved-reuse atomically upgrades a prior live-duplication for the same opportunity (higher value).
 
   * cost-to-solve - for an objective x work_type, take each developer's total spend on it and compute a
-    WINSORIZED MEAN across developers (trim the extremes, average the rest). This is robust to one
-    runaway session AND - unlike a bare median - is never any single developer's exact figure, so the
-    published savings can't be a stand-in for one person's spend. It is credited only when at least k
-    developers have solved that work, so a sub-k group's spend is never exposed.
+    WINSORIZED MEAN across developers (trim the extremes, average the rest). It is credited only when at
+    least k developers have solved that work, so the figure is a k-anonymous aggregate (k>=5 by default),
+    not attributable to any individual. Winsorization engages at >= 4 developers (the trimmed core has
+    >= 2 members) and at the default k>=5 the core has >= 3, making it robust to one runaway session; a
+    homogeneous cohort where every developer spent the same can still equal that common value, which
+    discloses nothing new about any one of them.
 
   * savings line - reports surface a k-gated "reuse avoided ~$X this period" band, a SAVINGS estimate
     shown beside real spend, never summed into it. solved-reuse credits the full cost-to-solve;
@@ -49,19 +51,18 @@ def median(xs: list[float]) -> float:
 
 
 def cost_to_solve(per_actor_costs: list[float]) -> float:
-    """robust, privacy-preserving central estimate of the cost to solve a piece of work: winsorize the
-    per-developer totals (trim ~the extremes) then average. blends several developers, so it is never
-    one person's exact spend, and one runaway session can't inflate it. published only when the caller
-    has already k-gated on len(per_actor_costs) >= k, so the trimmed set always has >= 3 members."""
+    """robust central estimate of the cost to solve a piece of work: winsorize the per-developer totals
+    (trim ~the extremes) then average. a k-anonymous aggregate, gated by the caller on
+    len(per_actor_costs) >= k. winsorization engages at n >= 4 (trimmed core has >= 2 members); at the
+    default k >= 5 the core has >= 3 and is robust to a runaway session. below 4 it averages all (a
+    blend of 2-3 developers); a lone value (n == 1) is only reachable if the operator sets k == 1."""
     s = sorted(c for c in per_actor_costs if c)
     n = len(s)
     if n == 0:
         return 0.0
     if n < 4:
-        # too few to trim - the k-gate (>= 5) prevents this from ever being published, but keep a sane
-        # value for internal/test use. mean, not a single datapoint.
-        return sum(s) / n
-    trim = max(1, n // 10)            # drop ~10% from each end
+        return sum(s) / n            # too few to symmetric-trim; average the blend (no single datapoint for n>=2)
+    trim = max(1, n // 10)           # drop ~10% from each end
     core = s[trim:n - trim]
     return sum(core) / len(core)
 
@@ -170,7 +171,9 @@ class LedgerStore:
             scope = tid if tid is not None else "default"
             ck = (scope, obj, wt)
             if ck not in cohorts:
-                cohorts[ck] = store.actor_costs_for(obj, wt if wt != "unknown" else None, tenant=scope)
+                # wt is the stored work_type ('unknown' for unclassified). actor_costs_for matches the
+                # unclassified bucket (NULL or 'unknown') uniformly, so it is never silently suppressed.
+                cohorts[ck] = store.actor_costs_for(obj, wt, tenant=scope)
             costs = cohorts[ck]
             if len(costs) < k:                        # sub-k cost-to-solve -> never credited
                 suppressed += 1

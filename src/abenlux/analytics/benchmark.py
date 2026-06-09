@@ -13,17 +13,18 @@ The whole design is ratios, not absolutes, behind several privacy walls:
 
   * cohort threshold - the comparison is released only when at least K_TENANTS tenants qualify.
 
-  * order statistics withheld for small cohorts - cohort_min/median/max are a tenant's near-exact raw
-    ratios when the cohort is tiny (for 3 tenants, min/median/max ARE the three tenants' values). So we
-    publish extremes only above ORDER_STATS_FLOOR tenants and the median only above MEDIAN_FLOOR, where
-    each becomes an aggregate over several tenants rather than one named tenant's figure. Below that, a
-    caller gets only their own value and their PERCENTILE - which reveals rank, the point of a
-    benchmark, and nothing else.
+  * order statistics withheld for small cohorts - cohort_min/median/max are a single tenant's ratio
+    when the cohort is tiny (for 3 tenants, min/median/max ARE the three tenants' values). So we publish
+    extremes only above ORDER_STATS_FLOOR tenants and the median only above MEDIAN_FLOOR. Each released
+    order statistic is still ONE tenant's DP-noised ratio (not an average), but at those cohort sizes it
+    is protected by the Laplace noise and the k-anonymity behind it, the same exposure class. Below the
+    floor a caller gets only their own value and their PERCENTILE - which reveals rank and nothing else.
 
-  * consistency + DP - all released figures for a metric (your value, min, median, max, and the
-    percentile) are derived from ONE Laplace-noised, sorted cohort series, so the row is internally
-    consistent (you always sits within [min,max], min<=median<=max) and DP-perturbed as defense in
-    depth, while the percentile still ranks you within the cohort.
+  * consistency + DP - the displayed point figures (your value, min, median, max) are derived from ONE
+    Laplace-noised, sorted cohort series, so the row is internally consistent (you within [min,max],
+    min<=median<=max) and DP-perturbed as defense in depth. The PERCENTILE is computed on the RAW
+    (un-noised) ratios: rank is ordinal and already protected by the k-anon + cohort gates, so noising
+    it would only make genuinely tied tenants jump between best and worst on reload, never helping.
 
 A degenerate (unpriced) tenant - one whose model isn't in the price table, so its priced cost is 0 -
 is excluded from the COST-denominated metrics (it would otherwise look "free" and collapse the cohort
@@ -116,9 +117,16 @@ def _median(sorted_xs: list[float]) -> float:
 
 
 def _percentile_in(value: float, series: list[float], higher_is_better: bool) -> float:
-    """fraction of the OTHER tenants this value beats on the good direction, in [0,1]. computed on the
-    same noised series shown to the user, so the rank is consistent with the displayed figures."""
-    others = [x for x in series if x is not value]
+    """fraction of the OTHER tenants this value beats on the good direction, in [0,1]. drops exactly ONE
+    occurrence of the focus value (by EQUALITY, not object identity - identity wrongly removes genuine
+    tie-peers that share a clamped constant), so genuinely tied tenants all land near 0.5 rather than a
+    random extreme. ranked on the RAW (un-noised) ratios so the rank is stable across reloads and tied
+    tenants stay tied - the rank is ordinal and already protected by the k-anon + cohort-size gates."""
+    others = list(series)
+    try:
+        others.remove(value)            # remove a single equal element; value is always present
+    except ValueError:
+        pass
     if not others:
         return 0.0
     wins = sum((value > o) if higher_is_better else (value < o) for o in others)
@@ -161,14 +169,18 @@ def benchmark(
     comparison = []
     if ready:
         for key, label, higher, _cost in METRICS:
-            # build ONE noised series per metric over the qualifying tenants that HAVE this metric
-            # (cost metrics drop unpriced tenants). everything below derives from this one series, so
-            # you/min/median/max and the percentile are mutually consistent and monotone.
-            raw = [(v.tenant_id, v.ratios[key]) for v in qualifying if v.ratios.get(key) is not None]
-            noised = {tid: _noise(val, gate) for tid, val in raw}
+            # one entry per qualifying tenant that HAS this metric (cost metrics drop unpriced tenants).
+            raw = {v.tenant_id: v.ratios[key] for v in qualifying if v.ratios.get(key) is not None}
+            # DISPLAY figures (you/min/median/max) are DP-noised, derived from one sorted series so the
+            # row is internally consistent (you within [min,max], min<=median<=max).
+            noised = {tid: _noise(val, gate) for tid, val in raw.items()}
             series = sorted(noised.values())
             you = noised.get(focus_tenant)              # None if focus lacks this metric (unpriced)
             n = len(series)
+            # the PERCENTILE (the authoritative comparison) is computed on the RAW ratios, so the rank is
+            # stable across reloads and genuinely tied tenants stay tied - noise must not reorder ranks.
+            raw_series = sorted(raw.values())
+            raw_you = raw.get(focus_tenant)
             row = {
                 "metric": key, "label": label, "higher_is_better": higher,
                 "you": round(you, 6) if you is not None else None,
@@ -176,7 +188,8 @@ def benchmark(
                 "cohort_min": round(series[0], 6) if n >= ORDER_STATS_FLOOR else None,
                 "cohort_max": round(series[-1], 6) if n >= ORDER_STATS_FLOOR else None,
                 "cohort_median": round(_median(series), 6) if n >= MEDIAN_FLOOR else None,
-                "your_percentile": _percentile_in(you, series, higher) if you is not None and n > 1 else None,
+                "your_percentile": (_percentile_in(raw_you, raw_series, higher)
+                                    if raw_you is not None and n > 1 else None),
             }
             comparison.append(row)
 

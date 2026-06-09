@@ -172,13 +172,15 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
 
 
 def _org_for(rec: DerivedRecord, tenants, cache: dict) -> str:
-    # resolve a record's org from its tenant via the registry, cached per batch. an unregistered tenant
-    # (day-one / demo) resolves to "default" so single-org matching still works; a registered tenant
-    # carries its real org so the broker never introduces developers across an org boundary.
+    # resolve a record's org from its tenant via the registry, cached per batch. a registered tenant
+    # carries its real org. an UNREGISTERED tenant gets its OWN per-tenant org bucket ("unreg:<id>") -
+    # NOT a shared "default" - so a developer still matches others in the same tenant (day-one demo)
+    # while two DIFFERENT unregistered tenants (which may be two different companies on a shared
+    # collector) never land in the same org bucket, and the broker never introduces them.
     tenant = getattr(rec, "tenant_id", None) or "default"
     if tenant not in cache:
         t = tenants.get(tenant)
-        cache[tenant] = t.org if t is not None else "default"
+        cache[tenant] = t.org if t is not None else f"unreg:{tenant}"
     return cache[tenant]
 
 
@@ -401,11 +403,13 @@ async def drift(tenant: str | None = None, principal: Principal = Depends(curren
 
 
 @app.get("/api/rollup/{dimension}")
-async def rollup(dimension: str, principal: Principal = Depends(current_principal)):
+async def rollup(dimension: str, tenant: str | None = None,
+                 principal: Principal = Depends(current_principal)):
     _need(principal, Permission.VIEW_AGGREGATES)
+    scope = _resolve_report_tenant(principal, tenant)  # scope to the caller's org, like report/savings
     store = _store()
     try:
-        rows = store.rollup(dimension)
+        rows = store.rollup(dimension, tenant=scope)
     except ValueError as e:
         store.close()
         raise HTTPException(status_code=400, detail=str(e))
@@ -432,18 +436,12 @@ async def benchmark_view(tenant: str | None = None, principal: Principal = Depen
     focus = _resolve_report_tenant(principal, tenant)
     from abenlux.analytics.benchmark import benchmark as build_benchmark
     tenants = _tenants()
+    # the cohort is the caller's OWN org's REGISTERED tenants - never a raw scan of the derived store.
+    # on a collector that more than one org ingests into, an unregistered tenant_id carries no proof of
+    # org membership, so admitting it (the old distinct_tenants fallback) could pull a foreign company's
+    # tenant_ids and ratios into the cohort. registering a tenant (abenlux tenant create) is the price of
+    # admission; an org with none registered honestly sees "cohort not ready" against only itself.
     cohort = [t.tenant_id for t in tenants.list(org=principal.org)]
-    # a single-org demo deployment (the unconfigured "default" org) has not registered tenants yet, so
-    # it benchmarks over whatever tenant_ids appear in the data - useful on day one. a NAMED org never
-    # does this. even for the default org, admit a raw tenant_id ONLY if it is unregistered or already
-    # owned by THIS org, so a named org's registered tenants can never be pulled into the default cohort.
-    if not cohort and principal.org == "default":
-        store0 = _store()
-        for tid in store0.distinct_tenants():
-            owner = tenants.get(tid)
-            if owner is None or owner.org == principal.org:
-                cohort.append(tid)
-        store0.close()
     tenants.close()
     if focus not in cohort:
         cohort = cohort + [focus]
@@ -493,10 +491,14 @@ async def create_tenant(request: Request, principal: Principal = Depends(current
     if existing is not None and existing.org != principal.org:
         tenants.close()
         raise HTTPException(status_code=409, detail="tenant_id already belongs to another org")
-    saved = tenants.upsert(Tenant(
-        tenant_id=tenant_id, org=principal.org, display_name=display,
-        residency=residency, created_ts=_time.time(),
-    ))
+    try:
+        saved = tenants.upsert(Tenant(
+            tenant_id=tenant_id, org=principal.org, display_name=display,
+            residency=residency, created_ts=_time.time(),
+        ))
+    except ValueError:                  # lost a race to another org's concurrent create -> 409
+        tenants.close()
+        raise HTTPException(status_code=409, detail="tenant_id already belongs to another org")
     tenants.close()
     return {"tenant": saved.to_dict()}
 

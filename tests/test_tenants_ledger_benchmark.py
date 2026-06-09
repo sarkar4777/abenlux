@@ -4,9 +4,10 @@ beside money spent) and the cross-tenant Benchmark Exchange (geographies of one 
 DP + cohort-gated). These tests pin the privacy walls as hard as the spend-side tests do: a tenant's
 data scopes cleanly, a sub-k group never publishes a ratio, and no cross-org cohort ever forms.
 """
+import pytest
 from fastapi.testclient import TestClient
 
-from abenlux.analytics.benchmark import benchmark, tenant_vector
+from abenlux.analytics.benchmark import _percentile_in, benchmark, tenant_vector
 from abenlux.analytics.reports import management_report
 from abenlux.api import server
 from abenlux.auth.principals import PrincipalStore
@@ -56,6 +57,20 @@ def test_tenant_upsert_is_idempotent(tmp_path):
     s.upsert(Tenant("acme-eu", "acme", "new name", "eu", 1.0))
     assert len(s.list()) == 1
     assert s.get("acme-eu").display_name == "new name"
+    s.close()
+
+
+def test_tenant_upsert_refuses_cross_org_reassignment(tmp_path):
+    # round-2 regression: the SQLite upsert is now an atomic conditional + post-write verify, so a
+    # second org can never flip the org of an existing global tenant_id (the report-leak hijack).
+    s = TenantStore(tmp_path / "t.db")
+    s.upsert(Tenant("shared", "acme", "ACME", "eu", 1.0))
+    with pytest.raises(ValueError):
+        s.upsert(Tenant("shared", "globex", "Globex", "eu", 1.0))
+    assert s.get("shared").org == "acme"               # ownership unchanged
+    # the owning org can still update its own tenant's metadata
+    s.upsert(Tenant("shared", "acme", "ACME renamed", "us", 1.0))
+    assert s.get("shared").display_name == "ACME renamed"
     s.close()
 
 
@@ -199,6 +214,21 @@ def test_ledger_credits_later_once_cohort_grows(tmp_path):
     store.close()
 
 
+def test_ledger_credits_unclassified_unknown_work_type(tmp_path):
+    # round-2 regression: unclassified work (work_type stored as the 'unknown' sentinel OR NULL) was
+    # silently suppressed because summary queried work_type IS NULL only. it must now be credited.
+    store = DerivedStore(tmp_path / "s.db")
+    for i in range(5):
+        # stored with the literal 'unknown' sentinel, as the classifier's fallback emits
+        store.insert(_rec(f"u{i}", f"dev{i}", tenant="t", objective="O", work_type="unknown", cost=3.0))
+    led = LedgerStore(tmp_path / "l.db")
+    led.book(AvoidedCostEvent("t", "O", "unknown", "c", 0, "solved_reuse", 0, 1.0), pair=("a", "b"))
+    summ = led.summary(store, "t", k=5)
+    assert summ["reuse_avoided_usd"] == 3.0 and summ["events_credited"] == 1
+    led.close()
+    store.close()
+
+
 def test_ledger_summary_scopes_by_tenant(tmp_path):
     store = DerivedStore(tmp_path / "s.db")
     _seed_cohort(store, tenant="acme-eu", objective="O", work_type="feature", n=5, cost=5.0)
@@ -281,6 +311,14 @@ def test_benchmark_release_is_internally_consistent_for_large_cohort(tmp_path):
         if c["you"] is not None:
             assert c["cohort_min"] <= c["you"] <= c["cohort_max"]         # you within the envelope
     st.close()
+
+
+def test_percentile_ties_land_near_half_not_a_random_extreme():
+    # round-2 regression: the identity-based exclusion wrongly dropped tie-peers that shared the clamped
+    # 0.0 constant, biasing the rank toward best/worst. equality-based single removal keeps ties tied.
+    assert _percentile_in(0.0, [0.0, 0.0, 0.0, 0.0, 0.0], higher_is_better=True) == 0.5
+    # focus 0.0, two genuine tie-peers at 0.0, two worse (lower=better): 2 wins + 2 ties over 4 -> 0.75
+    assert _percentile_in(0.0, [0.0, 0.0, 0.0, 0.5, 0.9], higher_is_better=False) == 0.75
 
 
 def test_benchmark_excludes_unpriced_tenant_from_cost_metrics(tmp_path):
@@ -471,6 +509,58 @@ def test_broker_enforces_org_wall():
     # same org, same topic -> matches
     same = b.submit(TopicSignal("acme-dev2", emb, "Saga", residency="eu", org="acme"))
     assert any(m.b == "acme-dev" for m in same)
+
+
+def test_org_for_isolates_distinct_unregistered_tenants(tmp_path):
+    # round-2 regression: two DIFFERENT unregistered tenants (possibly two companies on a shared
+    # collector) must NOT collapse into one shared "default" org bucket, or the broker would match them.
+    ts = TenantStore(tmp_path / "t.db")
+    ts.upsert(Tenant("acme-eu", "acme", "ACME", "eu", 1.0))
+    cache: dict = {}
+    o_a = server._org_for(_rec("x", "a", tenant="unreg-a"), ts, cache)
+    o_b = server._org_for(_rec("y", "b", tenant="unreg-b"), ts, cache)
+    o_reg = server._org_for(_rec("z", "c", tenant="acme-eu"), ts, cache)
+    # the SAME unregistered tenant still shares a bucket (day-one single-tenant self-matching works)
+    o_a2 = server._org_for(_rec("x2", "a2", tenant="unreg-a"), ts, {})
+    ts.close()
+    assert o_a != o_b                       # distinct unregistered tenants -> distinct org buckets
+    assert o_reg == "acme"                   # a registered tenant carries its real org
+    assert o_a2 == o_a
+
+
+def test_api_benchmark_cohort_excludes_unregistered_foreign_tenants(tmp_path, monkeypatch):
+    # round-2 regression: the benchmark cohort is the caller's REGISTERED org tenants only - never a raw
+    # scan of the derived store - so a foreign org's unregistered tenant_id can't enter the cohort.
+    db, _, tenant_db = _wire(monkeypatch, tmp_path)
+    ts = TenantStore(tenant_db)
+    for t in ("acme-eu", "acme-us"):
+        ts.upsert(Tenant(t, "acme", t, "eu", 1.0))
+    ts.close()
+    st = DerivedStore(db)
+    for t in ("acme-eu", "acme-us"):
+        for i in range(5):
+            st.insert(_rec(f"{t}{i}", f"{t}-a{i}", tenant=t, cost=1.0))
+    for i in range(5):                       # a foreign, UNREGISTERED tenant in the same shared store
+        st.insert(_rec(f"gx{i}", f"gx-a{i}", tenant="globex-secret", cost=9.0))
+    st.close()
+    client = TestClient(server.app)
+    out = client.get("/api/benchmark", headers={"Authorization": "Bearer acme-mgr"}).json()
+    assert "globex-secret" not in out["org_cohort"]      # foreign tenant_id never echoed back
+    assert set(out["org_cohort"]) <= {"acme-eu", "acme-us"}
+
+
+def test_api_rollup_is_tenant_scoped(tmp_path, monkeypatch):
+    db, _, _ = _wire(monkeypatch, tmp_path)
+    st = DerivedStore(db)
+    for i in range(5):
+        st.insert(_rec(f"eu{i}", f"a{i}", tenant="acme-eu", objective="EUObj", cost=2.0))
+    for i in range(5):
+        st.insert(_rec(f"us{i}", f"b{i}", tenant="acme-us", objective="USObj", cost=9.0))
+    st.close()
+    client = TestClient(server.app)
+    out = client.get("/api/rollup/objective", headers={"Authorization": "Bearer acme-mgr"}).json()
+    labels = {r["label"] for r in out["rows"]}
+    assert "EUObj" in labels and "USObj" not in labels   # acme-eu manager never sees acme-us rows
 
 
 def test_api_benchmark_endpoint(tmp_path, monkeypatch):

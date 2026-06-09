@@ -259,12 +259,17 @@ class _BaseStore:
 
     def actor_costs_for(self, objective_id: str, work_type: str | None,
                         tenant: str | None = None) -> list[float]:
-        """per-actor total cost on one objective x work_type. the MEDIAN of these is the org's typical
-        cost-to-solve that piece of work - the basis for valuing an avoided re-solve (reuse-yield).
-        median (not mean) so one runaway session does not inflate the avoided-cost estimate."""
+        """per-actor total cost on one objective x work_type - the basis for the reuse-yield
+        cost-to-solve. the UNCLASSIFIED bucket is requested as None or the 'unknown' sentinel and matches
+        BOTH a NULL work_type and the literal string 'unknown' (the classifier emits the string, but
+        other ingest paths may leave NULL), so an unclassified opportunity is never silently dropped."""
         pred, params = self._tenant_pred(tenant)
-        wt_clause = "work_type=?" if work_type is not None else "work_type IS NULL"
-        wt_params: tuple = (work_type,) if work_type is not None else ()
+        if work_type is None or work_type == "unknown":
+            wt_clause = "(work_type IS NULL OR work_type='unknown')"
+            wt_params: tuple = ()
+        else:
+            wt_clause = "work_type=?"
+            wt_params = (work_type,)
         rows = self._exec(
             "SELECT actor_pseudonym, COALESCE(SUM(cost_usd),0) c FROM derived "
             f"WHERE objective_id=? AND {wt_clause}" + self._and(pred, "AND") +

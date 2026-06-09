@@ -265,7 +265,8 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
             waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
         )
-        result.record.residency = getattr(SETTINGS, "residency", "eu")  # stamp the edge region for the residency wall
+        result.record.residency = getattr(SETTINGS, "residency", "eu")  # edge region for the residency wall
+        result.record.tenant_id = getattr(SETTINGS, "tenant_id", "default")  # org unit / geography
         _sink.insert(result.record)  # forward to collector or write the shared store
         _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
         _surface_to_developer(result, event)  # nudges + collab -> developer's private feed
@@ -379,6 +380,7 @@ def _ingest_otlp(payload: dict) -> int:
                 waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
             )
             result.record.residency = getattr(SETTINGS, "residency", "eu")
+            result.record.tenant_id = getattr(SETTINGS, "tenant_id", "default")
             _sink.insert(result.record)
             _dev_store.insert(result.record)
             _surface_to_developer(result, event)  # same private feed, regardless of tool/tier

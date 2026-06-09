@@ -22,7 +22,8 @@ class Permission(str, Enum):
     VIEW_OWN = "view_own"               # your own spend + waste + collaboration matches
     VIEW_AGGREGATES = "view_aggregates"  # k-anonymized org rollups (never individual rows)
     VIEW_COST = "view_cost"             # monetary aggregates / export (finance)
-    MANAGE = "manage"                   # knowledge graph, principals, config
+    VIEW_BENCHMARK = "view_benchmark"   # cross-tenant percentiles within own org (k-anon + DP, never raw)
+    MANAGE = "manage"                   # knowledge graph, principals, config, tenants
 
 
 class Role(str, Enum):
@@ -32,12 +33,17 @@ class Role(str, Enum):
     ADMIN = "admin"
 
 
-# every role gets VIEW_OWN - everyone is a developer of their own data first.
+# every role gets VIEW_OWN - everyone is a developer of their own data first. benchmark sits with
+# management and up, because comparing tenants (geographies of the org) is a leadership lens, and it
+# is the ONLY cross-tenant surface - and even then only k-anonymized, DP-noised percentiles, never
+# a tenant's raw rows (the residency/tenant wall on detail is never crossed, see analytics/benchmark).
 _ROLE_PERMS: dict[Role, set[Permission]] = {
     Role.DEVELOPER: {Permission.VIEW_OWN},
-    Role.MANAGER: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES},
-    Role.FINANCE: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES, Permission.VIEW_COST},
-    Role.ADMIN: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES, Permission.VIEW_COST, Permission.MANAGE},
+    Role.MANAGER: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES, Permission.VIEW_BENCHMARK},
+    Role.FINANCE: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES, Permission.VIEW_COST,
+                   Permission.VIEW_BENCHMARK},
+    Role.ADMIN: {Permission.VIEW_OWN, Permission.VIEW_AGGREGATES, Permission.VIEW_COST,
+                 Permission.VIEW_BENCHMARK, Permission.MANAGE},
 }
 
 
@@ -56,6 +62,10 @@ class Principal:
     role: Role
     pseudonym: str
     contact: dict | None = None   # static fallback handles (email/slack/teams), shared only on mutual consent
+    # the tenant (org unit / geography) this person belongs to, and the org that owns it. a principal
+    # only ever reports their OWN tenant; cross-tenant comparison is the k-anon benchmark, scoped to org.
+    tenant_id: str = "default"
+    org: str = "default"
 
     @property
     def permissions(self) -> set[Permission]:

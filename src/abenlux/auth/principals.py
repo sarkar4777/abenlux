@@ -38,6 +38,8 @@ class PrincipalStore:
                 role=Role(p.get("role", "developer")),
                 pseudonym=pseudonymize(subject, hmac_key),
                 contact=contact or None,
+                tenant_id=p.get("tenant_id", p.get("tenant", "default")),
+                org=p.get("org", "default"),
             )
         return cls(by_token)
 

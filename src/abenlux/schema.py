@@ -193,5 +193,9 @@ class DerivedRecord:
     # (it has no other way to know - OTel/derived records carry no region otherwise).
     residency: str = "eu"
 
+    # the tenant this record belongs to. a tenant is an org unit / geography (e.g. acme-eu, acme-us);
+    # tenants of one org are compared in the benchmark. content-free, stamped by the edge.
+    tenant_id: str = "default"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

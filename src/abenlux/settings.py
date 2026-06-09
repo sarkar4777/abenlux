@@ -41,6 +41,9 @@ class Settings:
     # the data-residency region of this device/tenant. forwarded on each derived record so the central
     # collaboration broker never matches across a residency boundary. set per-region in deployment.
     residency: str = os.getenv("ABEN_RESIDENCY", "eu")
+    # the tenant (org unit / geography) this edge belongs to. stamped on each derived record so the
+    # collector can scope reports and benchmark tenants of the same org against each other.
+    tenant_id: str = os.getenv("ABEN_TENANT", "default")
 
     @property
     def hmac_bytes(self) -> bytes:

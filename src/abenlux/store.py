@@ -50,7 +50,7 @@ _COLUMNS = [
     "is_retry_loop", "retry_similarity",
     "objective_id", "objective_label", "is_orphan",
     "attribution_method", "attribution_confidence",
-    "ticket_id", "work_type", "work_type_source", "residency",
+    "ticket_id", "work_type", "work_type_source", "residency", "tenant_id",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -68,7 +68,7 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           is_retry_loop {int_type}, retry_similarity {real_type},
           objective_id TEXT, objective_label TEXT, is_orphan {int_type},
           attribution_method TEXT, attribution_confidence {real_type},
-          ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT
+          ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT, tenant_id TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
@@ -100,7 +100,7 @@ def _values(r: DerivedRecord) -> tuple:
         int(r.is_retry_loop), r.retry_similarity,
         r.objective_id, r.objective_label, int(r.is_orphan),
         r.attribution_method, r.attribution_confidence,
-        r.ticket_id, r.work_type, r.work_type_source, r.residency,
+        r.ticket_id, r.work_type, r.work_type_source, r.residency, r.tenant_id,
     )
 
 
@@ -130,6 +130,25 @@ class _BaseStore:
             return _Result(rows, cur.description)
 
     @staticmethod
+    def _tenant_pred(tenant: str | None, col: str = "tenant_id") -> tuple[str, tuple]:
+        # build a WHERE fragment scoping to one tenant. "default" also matches NULL so rows written
+        # before the tenant column existed (migrated dbs) still belong to the default tenant. None ->
+        # no scoping (org-wide / legacy single-tenant behavior, the report default).
+        if tenant is None:
+            return "", ()
+        if tenant == "default":
+            return f"({col}=? OR {col} IS NULL)", (tenant,)
+        return f"{col}=?", (tenant,)
+
+    @staticmethod
+    def _and(pred: str, lead: str = "WHERE") -> str:
+        # splice a tenant predicate into a query: lead is WHERE for a query that has none yet, AND for
+        # one that already filters. empty pred collapses to nothing.
+        if not pred:
+            return ""
+        return f" {lead} {pred}"
+
+    @staticmethod
     def _rows(cur) -> list[dict]:
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -146,15 +165,18 @@ class _BaseStore:
         raise NotImplementedError
 
     # ----- aggregate reads (gated by k-anonymity in analytics) -----
-    def orphan_token_share(self) -> float:
+    def orphan_token_share(self, tenant: str | None = None) -> float:
+        pred, params = self._tenant_pred(tenant)
         cur = self._exec(
             "SELECT COALESCE(SUM(input_tokens+output_tokens),0), "
             "COALESCE(SUM(CASE WHEN is_orphan=1 THEN input_tokens+output_tokens ELSE 0 END),0) FROM derived"
+            + self._and(pred), params
         )
         total, orphan = cur.fetchone()
         return (orphan / total) if total else 0.0
 
-    def totals(self) -> dict:
+    def totals(self, tenant: str | None = None) -> dict:
+        pred, params = self._tenant_pred(tenant)
         return self._row(self._exec(
             "SELECT COUNT(*) n, COALESCE(SUM(input_tokens+output_tokens),0) tokens, "
             "COALESCE(SUM(cost_usd),0) cost, COUNT(DISTINCT actor_pseudonym) actors, "
@@ -164,10 +186,10 @@ class _BaseStore:
             "COALESCE(SUM(input_tokens),0) input_tokens, "
             "COALESCE(SUM(CASE WHEN is_retry_loop=1 THEN 1 ELSE 0 END),0) retries, "
             "COALESCE(SUM(CASE WHEN cost_priced=0 THEN 1 ELSE 0 END),0) unpriced "
-            "FROM derived"
+            "FROM derived" + self._and(pred), params
         ))
 
-    def rollup(self, dimension: str) -> list[dict]:
+    def rollup(self, dimension: str, tenant: str | None = None) -> list[dict]:
         allowed = {
             "objective": "objective_label", "tool": "tool", "model": "request_model",
             "provider": "provider", "tier": "tier", "work_type": "work_type",
@@ -175,11 +197,12 @@ class _BaseStore:
         if dimension not in allowed:
             raise ValueError(f"unknown rollup dimension {dimension!r}")
         col = allowed[dimension]
+        pred, params = self._tenant_pred(tenant)
         return self._rows(self._exec(
             f"SELECT COALESCE({col},'(unattributed)') AS label, COUNT(*) AS calls, "
             "COALESCE(SUM(input_tokens+output_tokens),0) AS tokens, "
             "COALESCE(SUM(cost_usd),0) AS cost, COUNT(DISTINCT actor_pseudonym) AS actors "
-            "FROM derived GROUP BY label ORDER BY cost DESC"
+            "FROM derived" + self._and(pred) + " GROUP BY label ORDER BY cost DESC", params
         ))
 
     def ticket_rollup(self) -> list[dict]:
@@ -191,21 +214,25 @@ class _BaseStore:
             "GROUP BY ticket_id, work_type, objective ORDER BY cost DESC"
         ))
 
-    def new_objectives(self, since_ts: float) -> list[dict]:
+    def new_objectives(self, since_ts: float, tenant: str | None = None) -> list[dict]:
         """objectives whose FIRST-EVER activity is at/after since_ts - i.e. new things being built
         this period. each row carries spend, devs, and the dominant work type, for traceability."""
+        pred, params = self._tenant_pred(tenant)
+        inner, _ = self._tenant_pred(tenant, "d2.tenant_id")
         return self._rows(self._exec(
             "SELECT objective_id, objective_label, MIN(ts) AS first_ts, "
             "COUNT(DISTINCT actor_pseudonym) AS actors, COALESCE(SUM(cost_usd),0) AS cost, "
             "(SELECT work_type FROM derived d2 WHERE d2.objective_id=d.objective_id "
-            " AND work_type IS NOT NULL GROUP BY work_type ORDER BY SUM(cost_usd) DESC LIMIT 1) AS work_type "
-            "FROM derived d WHERE objective_id IS NOT NULL "
+            f" AND work_type IS NOT NULL{self._and(inner, 'AND')} "
+            " GROUP BY work_type ORDER BY SUM(cost_usd) DESC LIMIT 1) AS work_type "
+            "FROM derived d WHERE objective_id IS NOT NULL" + self._and(pred, "AND") + " "
             "GROUP BY objective_id, objective_label HAVING MIN(ts) >= ? ORDER BY cost DESC",
-            (since_ts,),
+            params + params + (since_ts,),
         ))
 
-    def time_bounds(self) -> tuple[float, float]:
-        row = self._exec("SELECT MIN(ts), MAX(ts) FROM derived").fetchone()
+    def time_bounds(self, tenant: str | None = None) -> tuple[float, float]:
+        pred, params = self._tenant_pred(tenant)
+        row = self._exec("SELECT MIN(ts), MAX(ts) FROM derived" + self._and(pred), params).fetchone()
         return (row[0] or 0.0, row[1] or 0.0)
 
     def window_stats(self, start_ts: float, end_ts: float) -> dict:
@@ -219,12 +246,38 @@ class _BaseStore:
         d["orphan_share"] = (d["orphan_tokens"] / d["tokens"]) if d["tokens"] else 0.0
         return d
 
-    def objective_window_cost(self, objective_id: str, start_ts: float, end_ts: float) -> float:
+    def objective_window_cost(self, objective_id: str, start_ts: float, end_ts: float,
+                              tenant: str | None = None) -> float:
+        pred, params = self._tenant_pred(tenant)
         cur = self._exec(
-            "SELECT COALESCE(SUM(cost_usd),0) FROM derived WHERE objective_id=? AND ts >= ? AND ts < ?",
-            (objective_id, start_ts, end_ts),
+            "SELECT COALESCE(SUM(cost_usd),0) FROM derived WHERE objective_id=? AND ts >= ? AND ts < ?"
+            + self._and(pred, "AND"),
+            (objective_id, start_ts, end_ts) + params,
         )
         return cur.fetchone()[0] or 0.0
+
+    def actor_costs_for(self, objective_id: str, work_type: str | None,
+                        tenant: str | None = None) -> list[float]:
+        """per-actor total cost on one objective x work_type. the MEDIAN of these is the org's typical
+        cost-to-solve that piece of work - the basis for valuing an avoided re-solve (reuse-yield).
+        median (not mean) so one runaway session does not inflate the avoided-cost estimate."""
+        pred, params = self._tenant_pred(tenant)
+        wt_clause = "work_type=?" if work_type is not None else "work_type IS NULL"
+        wt_params: tuple = (work_type,) if work_type is not None else ()
+        rows = self._exec(
+            "SELECT actor_pseudonym, COALESCE(SUM(cost_usd),0) c FROM derived "
+            f"WHERE objective_id=? AND {wt_clause}" + self._and(pred, "AND") +
+            " GROUP BY actor_pseudonym",
+            (objective_id,) + wt_params + params,
+        ).fetchall()
+        return [r[1] for r in rows if r[1]]
+
+    def distinct_tenants(self) -> list[str]:
+        """tenant_ids present in the derived data. NULL (pre-tenant rows) is reported as 'default'."""
+        rows = self._exec(
+            "SELECT DISTINCT COALESCE(tenant_id,'default') FROM derived ORDER BY 1"
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def actor_work_types(self, actor_pseudonym: str) -> list[dict]:
         # one developer's own purpose mix (feature/fix/...) for their private view

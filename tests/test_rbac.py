@@ -25,8 +25,10 @@ def test_no_role_can_view_another_individual():
     individual_detail_perms = set()  # intentionally empty: such a permission does not exist
     for role in Role:
         assert permissions_for(role) & individual_detail_perms == set()
-    # and aggregates is the ONLY way managers see others - never per-person
-    assert permissions_for(Role.MANAGER) - {Permission.VIEW_OWN} == {Permission.VIEW_AGGREGATES}
+    # and aggregates are the ONLY way managers see others - never per-person. VIEW_BENCHMARK is also
+    # an aggregate surface (k-anon + DP cross-tenant percentiles), so it stays within that boundary.
+    assert permissions_for(Role.MANAGER) - {Permission.VIEW_OWN} == {
+        Permission.VIEW_AGGREGATES, Permission.VIEW_BENCHMARK}
 
 
 def test_everyone_has_view_own():

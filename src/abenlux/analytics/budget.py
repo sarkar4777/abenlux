@@ -65,17 +65,18 @@ def _status(spent: float, budget: float, forecast: float) -> str:
 
 
 def budget_status(
-    store, kg, *, period_start: float, period_end: float, now: float
+    store, kg, *, period_start: float, period_end: float, now: float, tenant: str | None = None
 ) -> list[BudgetStatus]:
     """per-objective spend-vs-budget with run-rate forecast. only objectives that declare a
-    budget are included, the rest are uncapped by definition."""
+    budget are included, the rest are uncapped by definition. tenant scopes the spend to one org unit
+    so each geography sees its own budget burn."""
     span = max(period_end - period_start, 1e-9)
     elapsed = min(max((now - period_start) / span, 0.0), 1.0)
     out: list[BudgetStatus] = []
     for obj in kg.objectives.values():
         if not obj.monthly_budget_usd:
             continue
-        spent = store.objective_window_cost(obj.id, period_start, now + 1e-9)
+        spent = store.objective_window_cost(obj.id, period_start, now + 1e-9, tenant=tenant)
         # floor the elapsed fraction used for the run-rate projection: a small spend a few minutes into
         # the period must not extrapolate to an absurd monthly forecast (caps the multiple at ~25x).
         forecast = spent / max(elapsed, 0.04)

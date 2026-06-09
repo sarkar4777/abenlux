@@ -48,19 +48,21 @@ def _gate_rows(rows: list[dict], gate: KAnonymityGate) -> list[RollupRow]:
     return out
 
 
-def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.0, kg=None) -> dict:
-    """org-level spend->value report. all per-group figures are k-anonymity gated."""
+def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.0, kg=None,
+                      tenant: str | None = None) -> dict:
+    """org-level spend->value report. all per-group figures are k-anonymity gated. tenant scopes the
+    whole report to one org unit / geography (None = org-wide / legacy single-tenant)."""
     gate = KAnonymityGate(k=k, dp_epsilon=dp_epsilon)
-    totals = store.totals()
+    totals = store.totals(tenant=tenant)
     org_actors = totals["actors"]
 
-    by_objective = _gate_rows(store.rollup("objective"), gate)
-    by_tool = _gate_rows(store.rollup("tool"), gate)
-    by_model = _gate_rows(store.rollup("model"), gate)
+    by_objective = _gate_rows(store.rollup("objective", tenant=tenant), gate)
+    by_tool = _gate_rows(store.rollup("tool", tenant=tenant), gate)
+    by_model = _gate_rows(store.rollup("model", tenant=tenant), gate)
 
     # org-wide scalars: noise them, and only release when the whole org clears k
     noisy_cost = gate.noisy_count(totals["cost"], org_actors)
-    orphan_share = store.orphan_token_share()
+    orphan_share = store.orphan_token_share(tenant=tenant)
 
     # recoverable resent-history, cache-AWARE. resent history that is already a cache hit is cheap
     # and not recoverable, so we only count the prefix that was billed as fresh input
@@ -83,8 +85,8 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         ps, pe, now = current_month_bounds()
         # k-anonymity also applies to budgets: an objective with 1-2 developers must not expose its
         # spend/forecast here (it would bypass the gate that suppresses the same group in by_objective).
-        obj_actors = {r["label"]: r["actors"] for r in store.rollup("objective")}
-        for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now):
+        obj_actors = {r["label"]: r["actors"] for r in store.rollup("objective", tenant=tenant)}
+        for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now, tenant=tenant):
             row = b.to_dict()
             actors = obj_actors.get(b.label, 0)
             if 0 < actors < k:                          # sub-k and non-empty -> hide the spend figures
@@ -98,25 +100,27 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
 
     # WHAT the spend is for: purpose mix + net-new vs maintenance investment + new initiatives
     from abenlux.attribution.attributor import MAINTENANCE, NET_NEW
-    by_work_type = _gate_rows(store.rollup("work_type"), gate)
+    wt_rows = store.rollup("work_type", tenant=tenant)
+    by_work_type = _gate_rows(wt_rows, gate)
     investment = {"net_new": 0.0, "maintenance": 0.0, "unclassified": 0.0}
-    for r in store.rollup("work_type"):
+    for r in wt_rows:
         if not gate.allows(r["actors"]):
             continue  # a work-type with fewer than k developers is suppressed here too, not summed in
         lbl = r["label"]
         cat = "net_new" if lbl in NET_NEW else ("maintenance" if lbl in MAINTENANCE else "unclassified")
         investment[cat] += r["cost"]
     investment = {k2: round(v, 2) for k2, v in investment.items()}
-    lo, hi = store.time_bounds()
+    lo, hi = store.time_bounds(tenant=tenant)
     since = (lo + hi) / 2 if hi > lo else lo
     new_initiatives = []
-    for o in store.new_objectives(since):
+    for o in store.new_objectives(since, tenant=tenant):
         new_initiatives.append({
             "label": o["objective_label"], "work_type": o["work_type"], "actors": o["actors"],
             "cost": round(o["cost"], 2) if gate.allows(o["actors"]) else None,  # k-gate the figure
         })
 
     return {
+        "tenant": tenant,
         "trend": asdict(trend) if trend else None,
         "budgets": budgets,
         "by_work_type": [r.__dict__ for r in by_work_type],

@@ -210,13 +210,19 @@ def cmd_cost(args) -> None:
 
 def cmd_report(args) -> None:
     kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path) if SETTINGS.kg_path else KnowledgeGraph()
+    tenant = getattr(args, "tenant", None) or SETTINGS.tenant_id
     store = open_store(SETTINGS.db_path)
-    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg)
+    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg, tenant=tenant)
     store.close()
+    from abenlux.ledger import open_ledger
+    import os as _os
+    ledger = open_ledger(_os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
+    rep["reuse_yield"] = ledger.summary(tenant, k=SETTINGS.k_anon)
+    ledger.close()
     if args.json:
         print(json.dumps(rep, indent=2))
         return
-    print("== Abenlux management report (k-anonymity gated) ==")
+    print(f"== Abenlux management report (k-anonymity gated)  tenant:{tenant} ==")
     print(f" actors:{rep['org_actors']}  events:{rep['total_events']}  "
           f"tokens:{rep['total_tokens']:,}  cost:${rep['total_cost_usd']:,.2f}")
     print(f" orphan token share : {rep['orphan_token_share']*100:.1f}%  "
@@ -226,6 +232,10 @@ def cmd_report(args) -> None:
     band = rep["recoverable_resent_history_usd"]
     print(f" recoverable via caching : ${band['floor']:,.2f}-${band['ceiling']:,.2f}  "
           f"(uncached resends, same context - zero detail loss)")
+    ry = rep.get("reuse_yield") or {}
+    if ry.get("reuse_avoided_usd"):
+        print(f" reuse-yield (avoided re-solves) : ~${ry['reuse_avoided_usd']:,.2f}  "
+              f"({ry['events_credited']} reuses, k-gated - a SAVING, shown beside spend)")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
     trend = rep.get("trend")
@@ -465,6 +475,81 @@ def cmd_watch(args) -> None:
         print("\nstopped.")
 
 
+def cmd_tenant(args) -> None:
+    # tenants are org units / geographies of one org, the unit the benchmark compares. content-free.
+    import os as _os
+    import time as _time
+
+    from abenlux.tenants import Tenant, open_tenant_store
+    store = open_tenant_store(_os.getenv("ABEN_TENANT_DB", "abenlux-tenants.db"))
+    if args.tenant_cmd == "create":
+        t = store.upsert(Tenant(
+            tenant_id=args.tenant_id, org=args.org,
+            display_name=args.name or args.tenant_id,
+            residency=args.residency or SETTINGS.residency, created_ts=_time.time(),
+        ))
+        store.close()
+        print(f"created tenant {t.tenant_id}  org:{t.org}  region:{t.residency}")
+        print(f"point that region's edges at it:  ABEN_TENANT={t.tenant_id} abenlux gateway")
+        return
+    rows = store.list(org=args.org)
+    store.close()
+    if args.json:
+        print(json.dumps([r.to_dict() for r in rows], indent=2))
+        return
+    if not rows:
+        print("no tenants yet. create one:  abenlux tenant create <id> --org <org>")
+        return
+    print(f"{'tenant_id':<20} {'org':<14} {'region':<8} display")
+    for r in rows:
+        print(f"{r.tenant_id:<20} {r.org:<14} {r.residency:<8} {r.display_name}")
+
+
+def cmd_benchmark(args) -> None:
+    # cross-tenant comparison within one org: ratios only, k-anon per tenant, DP-noised, cohort-gated.
+    import os as _os
+
+    from abenlux.analytics.benchmark import benchmark as build_benchmark
+    from abenlux.ledger import open_ledger
+    from abenlux.tenants import open_tenant_store
+    focus = args.tenant or SETTINGS.tenant_id
+    tstore = open_tenant_store(_os.getenv("ABEN_TENANT_DB", "abenlux-tenants.db"))
+    cohort = [t.tenant_id for t in tstore.list(org=args.org)]
+    tstore.close()
+    store = open_store(SETTINGS.db_path)
+    if not cohort:
+        cohort = store.distinct_tenants()
+    if focus not in cohort:
+        cohort = cohort + [focus]
+    ledger = open_ledger(_os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
+    reuse = {t: ledger.summary(t, k=SETTINGS.k_anon)["reuse_avoided_usd"] for t in cohort}
+    ledger.close()
+    out = build_benchmark(store, tenants=cohort, focus_tenant=focus, k=SETTINGS.k_anon,
+                          dp_epsilon=SETTINGS.dp_epsilon, reuse_by_tenant=reuse)
+    store.close()
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    rd = out["readiness"]
+    print(f"== benchmark: {focus} vs org cohort ==")
+    print(f" cohort: {rd['cohort_size']}/{rd['k_tenants_required']} tenants qualify  ({rd['reason']})")
+    if not rd["ready"]:
+        print(" your ratios (private to you until the cohort is ready):")
+        for key, _label, _h in [(m[0], m[1], m[2]) for m in _bench_metrics()]:
+            print(f"   {key:<28} {out['your_ratios'].get(key)}")
+        return
+    print(f"{'metric':<30} {'you':>10} {'cohort med':>12} {'percentile':>11}")
+    for c in out["comparison"]:
+        arrow = "higher=better" if c["higher_is_better"] else "lower=better"
+        print(f"{c['label']:<30} {c['you']:>10.4f} {c['cohort_median']:>12.4f} "
+              f"{c['your_percentile']*100:>9.0f}%  ({arrow})")
+
+
+def _bench_metrics():
+    from abenlux.analytics.benchmark import METRICS
+    return METRICS
+
+
 _OVERVIEW = """abenlux - AI spend -> value attribution plane
 
 YOUR STUFF (private to you, never seen by management)
@@ -485,6 +570,8 @@ SET UP CAPTURE
 MANAGEMENT / IT
   abenlux serve              the collector + dashboard (k-anonymized, RBAC)
   abenlux report             spend -> value report (k-anonymity gated)
+  abenlux tenant             create / list tenants (org units, geographies)
+  abenlux benchmark          compare your tenant vs the org cohort (k-anon, DP)
   abenlux sync-cursor        pull Tier-3 Cursor usage (metadata only)
 
 UTIL
@@ -547,7 +634,23 @@ def main() -> None:
 
     r = sub.add_parser("report", help="management spend -> value report (k-anonymity gated)")
     r.add_argument("--json", action="store_true")
+    r.add_argument("--tenant", help="scope to one tenant (org unit / geography), default ABEN_TENANT")
     r.set_defaults(func=cmd_report)
+
+    tn = sub.add_parser("tenant", help="create / list tenants (org units, geographies)")
+    tn.add_argument("tenant_cmd", nargs="?", choices=["create", "list"], default="list")
+    tn.add_argument("tenant_id", nargs="?", help="tenant id, e.g. acme-us (for create)")
+    tn.add_argument("--org", default="default", help="the org the tenant belongs to")
+    tn.add_argument("--name", help="display name")
+    tn.add_argument("--residency", help="data-residency region, default ABEN_RESIDENCY")
+    tn.add_argument("--json", action="store_true")
+    tn.set_defaults(func=cmd_tenant)
+
+    bm = sub.add_parser("benchmark", help="compare your tenant vs the org cohort (k-anon, DP)")
+    bm.add_argument("--tenant", help="focus tenant, default ABEN_TENANT")
+    bm.add_argument("--org", default="default", help="the org whose tenants form the cohort")
+    bm.add_argument("--json", action="store_true")
+    bm.set_defaults(func=cmd_benchmark)
 
     m = sub.add_parser("me", help="your own private spend + recent nudges")
     m.add_argument("-n", type=int, default=20, help="how many recent nudges to show")

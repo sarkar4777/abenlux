@@ -57,6 +57,20 @@ def _contacts():
     return ContactStore(os.getenv("ABEN_CONTACT_DB", "abenlux-contacts.db"))
 
 
+def _ledger():
+    import os
+
+    from abenlux.ledger import open_ledger
+    return open_ledger(os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
+
+
+def _tenants():
+    import os
+
+    from abenlux.tenants import open_tenant_store
+    return open_tenant_store(os.getenv("ABEN_TENANT_DB", "abenlux-tenants.db"))
+
+
 def _peer_card(peer_pseudonym: str, contacts) -> dict:
     # the peer's shareable card: their self-set handles override the static principal fallback.
     # only ever called for a mutually-consented match.
@@ -131,6 +145,7 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     items = payload if isinstance(payload, list) else [payload]
     store = _store()
     mstore = _matches()
+    ledger = _ledger()
     n, rejected = 0, 0
     for d in items:
         if not isinstance(d, dict):
@@ -142,22 +157,24 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
             rec = DerivedRecord(**clean)        # a malformed/mistyped item must not 500 the whole batch
             _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
             store.insert(rec)
-            _match_centrally(rec, mstore)
+            _match_centrally(rec, mstore, store, ledger)
         except Exception:
             rejected += 1
             continue
         n += 1
+    ledger.close()
     mstore.close()
     store.close()
     return {"ingested": n, "rejected": rejected}
 
 
-def _match_centrally(rec: DerivedRecord, mstore: MatchStore) -> None:
+def _match_centrally(rec: DerivedRecord, mstore: MatchStore, store=None, ledger=None) -> None:
     # double-blind matching at the collector over content-free signals. writes one row per side,
     # each owner sees only their own. management never sees this - it is not a report.
     if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
         return
     obj = _kg.objectives.get(rec.objective_id)
+    tenant = getattr(rec, "tenant_id", None) or "default"
     sig = TopicSignal(
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
         topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
@@ -166,6 +183,23 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore) -> None:
     for m in _broker.submit(sig):
         mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)
         mstore.record(m.b, m.a, m.topic, m.similarity, m.mode)
+        # book the avoided re-solve: the broker just surfaced a reusable/duplicate effort, so part (or
+        # all) of a second solve is avoided. valued at the tenant's k-gated median cost-to-solve.
+        if store is not None and ledger is not None:
+            _book_avoided(rec, m, tenant, store, ledger)
+
+
+def _book_avoided(rec: DerivedRecord, m, tenant: str, store, ledger) -> None:
+    from abenlux.ledger import AvoidedCostEvent, estimate_avoided
+    costs = store.actor_costs_for(rec.objective_id, rec.work_type, tenant=tenant)
+    if not costs:
+        return
+    ev = AvoidedCostEvent(
+        tenant_id=tenant, objective_id=rec.objective_id, work_type=rec.work_type or "unknown",
+        cluster_id=m.topic, estimated_avoided_usd=estimate_avoided(costs, m.mode),
+        mode=m.mode, actors=len(costs), ts=rec.ts,
+    )
+    ledger.book(ev, pair=(m.a, m.b))
 
 
 @app.get("/api/whoami")
@@ -245,13 +279,45 @@ async def set_contact(request: Request, principal: Principal = Depends(current_p
     return {"contact": saved}
 
 
+def _resolve_report_tenant(principal: Principal, requested: str | None) -> str:
+    """a principal reports their OWN tenant by default. they may request another tenant only if it is
+    in their own org (admins can manage any tenant in their org) - never another org's. cross-tenant
+    DETAIL stays inside the org wall; cross-tenant COMPARISON is the k-anon benchmark, not this report."""
+    if not requested or requested == principal.tenant_id:
+        return principal.tenant_id
+    tenants = _tenants()
+    try:
+        org = tenants.org_of(requested)
+    finally:
+        tenants.close()
+    if org is not None and org == principal.org:
+        return requested
+    raise HTTPException(status_code=403, detail="tenant is outside your org")
+
+
 @app.get("/api/report")
-async def report(principal: Principal = Depends(current_principal)):
+async def report(tenant: str | None = None, principal: Principal = Depends(current_principal)):
     _need(principal, Permission.VIEW_AGGREGATES)
+    scope = _resolve_report_tenant(principal, tenant)
     store = _store()
-    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg)
+    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg, tenant=scope)
     store.close()
+    ledger = _ledger()
+    rep["reuse_yield"] = ledger.summary(scope, k=SETTINGS.k_anon)  # avoided re-solves, beside spend
+    ledger.close()
     return rep
+
+
+@app.get("/api/savings")
+async def savings(tenant: str | None = None, principal: Principal = Depends(current_principal)):
+    # the reuse-yield ledger: estimated cost of re-solves avoided, k-anonymity gated, scoped to the
+    # caller's tenant (or another tenant in their org). a savings figure, shown beside spend not inside.
+    _need(principal, Permission.VIEW_AGGREGATES)
+    scope = _resolve_report_tenant(principal, tenant)
+    ledger = _ledger()
+    out = ledger.summary(scope, k=SETTINGS.k_anon)
+    ledger.close()
+    return out
 
 
 @app.get("/api/budgets")
@@ -330,6 +396,74 @@ async def rollup(dimension: str, principal: Principal = Depends(current_principa
                         "actors": r["actors"], "suppressed": True})
     store.close()
     return {"dimension": dimension, "rows": out}
+
+
+@app.get("/api/benchmark")
+async def benchmark_view(tenant: str | None = None, principal: Principal = Depends(current_principal)):
+    # cross-tenant comparison within the caller's OWN org. k-anon per tenant, DP-noised, gated on a
+    # minimum cohort size. the focus tenant defaults to the caller's own, overridable to any tenant in
+    # their org. no other org's tenants are ever in the cohort.
+    _need(principal, Permission.VIEW_BENCHMARK)
+    focus = _resolve_report_tenant(principal, tenant)
+    from abenlux.analytics.benchmark import benchmark as build_benchmark
+    tenants = _tenants()
+    cohort = [t.tenant_id for t in tenants.list(org=principal.org)]
+    tenants.close()
+    # a single-org demo deployment (the unconfigured "default" org) has not registered tenants yet, so
+    # it benchmarks over whatever tenant_ids appear in the data - useful on day one. a NAMED org never
+    # does this: pulling raw tenant_ids would risk mixing another org's tenants into the cohort, so a
+    # named org with no registered tenants compares only itself (honestly "cohort not ready").
+    if not cohort and principal.org == "default":
+        store0 = _store()
+        cohort = store0.distinct_tenants()
+        store0.close()
+    if focus not in cohort:
+        cohort = cohort + [focus]
+    ledger = _ledger()
+    reuse_by_tenant = {t: ledger.summary(t, k=SETTINGS.k_anon)["reuse_avoided_usd"] for t in cohort}
+    ledger.close()
+    store = _store()
+    out = build_benchmark(
+        store, tenants=cohort, focus_tenant=focus, k=SETTINGS.k_anon,
+        dp_epsilon=SETTINGS.dp_epsilon, reuse_by_tenant=reuse_by_tenant,
+    )
+    store.close()
+    out["org"] = principal.org
+    return out
+
+
+@app.get("/api/tenants")
+async def list_tenants(principal: Principal = Depends(current_principal)):
+    # a principal sees the tenants of their OWN org only - the set that forms their benchmark cohort.
+    _need(principal, Permission.VIEW_AGGREGATES)
+    tenants = _tenants()
+    rows = [t.to_dict() for t in tenants.list(org=principal.org)]
+    tenants.close()
+    return {"org": principal.org, "tenants": rows}
+
+
+@app.post("/api/tenants")
+async def create_tenant(request: Request, principal: Principal = Depends(current_principal)):
+    # creating a tenant (org unit / geography) is an admin action, and the new tenant is always bound
+    # to the admin's OWN org - you cannot mint a tenant into someone else's org.
+    _need(principal, Permission.MANAGE)
+    body = await request.json()
+    tenant_id = (body.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    from abenlux.processing.redact import redact
+    from abenlux.tenants import Tenant
+    tenant_id = redact(tenant_id).text
+    display = redact(str(body.get("display_name") or tenant_id)).text
+    residency = redact(str(body.get("residency") or SETTINGS.residency)).text
+    import time as _time
+    tenants = _tenants()
+    saved = tenants.upsert(Tenant(
+        tenant_id=tenant_id, org=principal.org, display_name=display,
+        residency=residency, created_ts=_time.time(),
+    ))
+    tenants.close()
+    return {"tenant": saved.to_dict()}
 
 
 @app.get("/api/objectives")

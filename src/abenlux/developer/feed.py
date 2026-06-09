@@ -63,17 +63,25 @@ class LocalSignalFeed:
             recoverable_usd=round(recoverable_usd, 4), detail=signal.detail,
         ))
 
-    def append_collab(self, match, *, tool: str | None = None) -> None:
-        mode = match.mode
+    def _collab_line(self, mode: str, topic: str) -> str:
         if mode == "solved_reuse":
-            line = (f"Someone in the org already solved something close to '{match.topic}'. "
+            return (f"Someone in the org already solved something close to '{topic}'. "
                     f"Reuse beats re-solve - request a double-blind intro to compare notes.")
-        else:
-            line = (f"You and another developer are working on very similar problems "
-                    f"('{match.topic}') right now. Want a double-blind intro?")
+        return (f"You and another developer are working on very similar problems "
+                f"('{topic}') right now. Want a double-blind intro?")
+
+    def append_collab(self, match, *, tool: str | None = None) -> None:
+        self.append(FeedEntry(
+            ts=time.time(), kind=f"collab_{match.mode}", severity="info",
+            line=self._collab_line(match.mode, match.topic), tool=tool,
+            detail=f"similarity={match.similarity}",
+        ))
+
+    def append_collab_remote(self, topic: str, mode: str, similarity, *, tool: str | None = None) -> None:
+        # a match surfaced by polling the central collector (org/forward mode), not the local broker
         self.append(FeedEntry(
             ts=time.time(), kind=f"collab_{mode}", severity="info",
-            line=line, tool=tool, detail=f"similarity={match.similarity}",
+            line=self._collab_line(mode, topic), tool=tool, detail=f"similarity={similarity}",
         ))
 
     def append_budget(self, line: str, *, tool: str | None = None) -> None:

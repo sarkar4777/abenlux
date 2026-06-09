@@ -255,6 +255,28 @@ async def budget_status_for_edge(authorization: str | None = Header(default=None
     return snap
 
 
+@app.get("/v1/collab-status")
+async def collab_status_for_edge(
+    authorization: str | None = Header(default=None),
+    x_aben_pseudonym: str | None = Header(default=None),
+):
+    # content-free collaboration matches for ONE pseudonym, so the edge agent can live-push a toast
+    # when a colleague starts on the same problem (matching itself happens centrally - the edge can't,
+    # it only sees its own signals). device ingest token + the caller's own pseudonym; no peer identity
+    # is returned (that needs a mutual double-blind consent via /api/collab), only topic + mode + state.
+    token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
+    if token not in SETTINGS.ingest_tokens:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
+    if not x_aben_pseudonym:
+        return {"matches": []}
+    mstore = _matches()
+    out = [{"id": m["id"], "topic": m["topic"], "similarity": m["similarity"], "mode": m["mode"],
+            "mutual": mstore.mutually_consented(x_aben_pseudonym, m["peer"])}
+           for m in mstore.for_owner(x_aben_pseudonym)]
+    mstore.close()
+    return {"matches": out}
+
+
 @app.get("/api/drift")
 async def drift(principal: Principal = Depends(current_principal)):
     _need(principal, Permission.VIEW_AGGREGATES)

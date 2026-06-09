@@ -109,6 +109,26 @@ def cmd_serve(args) -> None:
     uvicorn.run("abenlux.api.server:app", host=args.host, port=args.port, reload=False)
 
 
+def cmd_agent(args) -> None:
+    # the background capture agent: install it once and it starts at login on Linux/macOS/Windows,
+    # runs in YOUR session (so toasts render), and nudges you about waste, budgets, and collaboration.
+    from abenlux.agent import service
+    action = getattr(args, "action", "status") or "status"
+    if action == "run":
+        # load the snapshotted config BEFORE the gateway module imports Settings, then run it
+        n = service.load_env_file()
+        print(f"abenlux agent: loaded {n} config vars from {service.ENV_FILE}, starting capture on :{args.port}")
+        cmd_gateway(args)
+    elif action == "install":
+        print(service.install(args.port))
+        print(" config snapshot:", service.ENV_FILE, "(edit it and re-run `abenlux agent install` to update)")
+    elif action == "uninstall":
+        print(service.uninstall())
+    else:
+        print(service.status())
+        print(" run state config:", service.ENV_FILE if service.ENV_FILE.exists() else "(none - using current env)")
+
+
 def cmd_mock(args) -> None:
     # a protocol-correct fake model upstream so any tool can be verified without spending tokens.
     import uvicorn
@@ -445,6 +465,7 @@ YOUR STUFF (private to you, never seen by management)
   abenlux contact            your shareable contact card (revealed only on a mutual intro)
 
 SET UP CAPTURE
+  abenlux agent install      install the background agent (starts at login, Win/mac/Linux)
   abenlux gateway            run the on-device capture agent (loopback proxy + OTLP ingest)
   abenlux onboard <tool>     print the exact setup for your tool and shell
   abenlux tiers              the tool capability matrix
@@ -477,6 +498,12 @@ def main() -> None:
     g = sub.add_parser("gateway", help="run the on-device capture agent")
     g.add_argument("--port", type=int, default=8088)
     g.set_defaults(func=cmd_gateway)
+
+    ag = sub.add_parser("agent", help="background capture agent: install/run at login (Win/mac/Linux)")
+    ag.add_argument("action", nargs="?", choices=["install", "uninstall", "status", "run"],
+                    default="status", help="install (autostart at login), uninstall, status, or run")
+    ag.add_argument("--port", type=int, default=8088)
+    ag.set_defaults(func=cmd_agent)
 
     sv = sub.add_parser("serve", help="run the management collector + dashboard")
     sv.add_argument("--host", default="127.0.0.1")

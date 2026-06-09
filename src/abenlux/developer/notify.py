@@ -18,10 +18,32 @@ import subprocess
 import time
 
 _TITLE = "Abenlux"
+# a stable AppUserModelID. Win10/11 drop toasts from an app whose AUMID is not registered, so the
+# agent installer writes a registry entry for this id (register_windows_aumid) and the toast is
+# raised under it. Without registration the toast may silently no-show - hence `abenlux agent install`.
+_AUMID = "Abenlux.Agent"
+
+
+def register_windows_aumid() -> bool:
+    """register the AppUserModelID under HKCU so Windows reliably shows our toasts. idempotent,
+    best-effort, returns True if it ran. invoked by `abenlux agent install`, not on every toast."""
+    if platform.system() != "Windows":
+        return False
+    ps = (
+        f"$k='HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\{_AUMID}';"
+        "New-Item -Path $k -Force | Out-Null;"
+        f"New-ItemProperty -Path $k -Name DisplayName -Value '{_TITLE}' -PropertyType String -Force | Out-Null"
+    )
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                       capture_output=True, timeout=10)
+        return True
+    except Exception:
+        return False
 
 
 def _windows(message: str) -> None:
-    # built-in WinRT toast, no install needed on Win10/11
+    # built-in WinRT toast, no install needed on Win10/11, raised under our registered AUMID
     msg = message.replace("'", "`'")
     ps = (
         "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,"
@@ -32,7 +54,7 @@ def _windows(message: str) -> None:
         f"$x.Item(0).AppendChild($t.CreateTextNode('{_TITLE}'))|Out-Null;"
         f"$x.Item(1).AppendChild($t.CreateTextNode('{msg}'))|Out-Null;"
         "$n=[Windows.UI.Notifications.ToastNotification]::new($t);"
-        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Abenlux').Show($n)"
+        f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{_AUMID}').Show($n)"
     )
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                    capture_output=True, timeout=5)

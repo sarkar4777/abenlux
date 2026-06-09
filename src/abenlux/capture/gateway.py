@@ -16,9 +16,6 @@ tools alike. Downstream of build_event / events_from_otlp, the two paths are ide
 
 Run:  abenlux gateway   (or: uvicorn abenlux.capture.gateway:app)
 Then: ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider ...
-
-This file imports web deps (fastapi, httpx). The domain/pipeline modules do not, so the core
-stays unit-testable without a server.
 """
 from __future__ import annotations
 
@@ -114,6 +111,45 @@ def _budget_snapshot() -> dict:
     return _budget_state["snapshot"]
 
 
+_COLLAB_TTL = 45.0
+# in forward/org mode the broker runs at the COLLECTOR, so the local broker never matches across
+# developers. instead the edge polls the collector for its own matches (content-free) on a TTL and
+# toasts the new ones - this is what makes "a colleague is on the same problem" a live nudge at scale.
+_collab_state = {"refreshed": -1e18, "seen": OrderedDict()}
+
+
+def _poll_collab_matches(pseudonym: str) -> list[dict]:
+    """fetch this developer's collaboration matches from the collector, return only NEW ones. polled
+    on a TTL, keyed by the device token + the caller's own pseudonym. best-effort, never raises."""
+    if not SETTINGS.collector_url or not pseudonym:
+        return []
+    now = time.perf_counter()
+    if now - _collab_state["refreshed"] < _COLLAB_TTL:
+        return []
+    _collab_state["refreshed"] = now
+    fresh: list[dict] = []
+    try:
+        r = httpx.Client(timeout=3.0).get(
+            SETTINGS.collector_url.rstrip("/") + "/v1/collab-status",
+            headers={"Authorization": f"Bearer {SETTINGS.ingest_token}", "X-Aben-Pseudonym": pseudonym})
+        if r.status_code == 200:
+            seen = _collab_state["seen"]
+            for m in r.json().get("matches", []):
+                if m.get("mutual"):           # already introduced, no need to nudge again
+                    continue
+                key = m.get("id")
+                if key in seen:
+                    continue
+                seen[key] = True
+                seen.move_to_end(key)
+                while len(seen) > 4096:
+                    seen.popitem(last=False)
+                fresh.append(m)
+    except Exception:
+        pass
+    return fresh
+
+
 def _surface_to_developer(result, event) -> None:
     """push waste nudges + collaboration matches to the developer's OWN local feed. tool-agnostic:
     runs identically for gateway (Tier-2) and OTLP (Tier-1) captures."""
@@ -137,12 +173,19 @@ def _surface_to_developer(result, event) -> None:
             topic_label=rec.objective_label or "general",
             client=getattr(obj, "client", None),
         )
-        for match in _broker.submit(sig):
+        for match in _broker.submit(sig):  # solo/local mode: the on-device broker matched
             _feed.append_collab(match, tool=tool)
             _toast("collab", f"A colleague is on a similar problem: {match.topic}. Run `abenlux collab` for a double-blind intro.")
             # persist for the dashboard, one row per side, each owner sees only their own
             _matchstore.record(match.a, match.b, match.topic, match.similarity, match.mode)
             _matchstore.record(match.b, match.a, match.topic, match.similarity, match.mode)
+
+    # forward/org mode: matching happens at the collector, so poll it for THIS developer's new
+    # matches and live-push a toast. content-free, on a TTL, deduped against what we've shown.
+    if SETTINGS.collector_url and rec.actor_pseudonym:
+        for m in _poll_collab_matches(rec.actor_pseudonym):
+            _feed.append_collab_remote(m["topic"], m["mode"], m["similarity"], tool=tool)
+            _toast("collab", f"A colleague is on a similar problem: {m['topic']}. Run `abenlux collab` for a double-blind intro.")
 
     # budget guardrail: PRIVATE nudge when this developer's current objective is over/at-risk.
     # management never sees this fire, it is a heads-up to the person, on their own device.

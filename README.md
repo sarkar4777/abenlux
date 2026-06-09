@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-196%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-203%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -75,7 +75,7 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 | 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
 | 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
 | 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers — paired on **keyphrase topic vectors** with an **objective-aware** bar, so two people on the same problem match even when phrased differently, and generic shared vocabulary doesn't. Precision-first (a false pairing is worse than a miss): **100% precision** on the labelled corpus. Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
-| 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. |
+| 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. A **background agent** (`abenlux agent install`) starts at login on Linux/macOS/Windows and runs in your own session, so collaboration matches and budget warnings reach you live, even at org scale. |
 | 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
 | 🪶 **Minimal, optional LLM** | When branch + patterns + learned vocabulary all miss, one tiny cached call (OpenAI / Azure / Claude / Gemini) with **extractive prompt compression** classifies intent for fractions of a cent. |
 
@@ -88,7 +88,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 196 tests
+make test             # 203 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -219,6 +219,21 @@ abenlux contact   # set the handles colleagues can reach you on after a mutual i
 Native desktop toasts fire automatically when a nudge happens. Full per-tool/per-OS guide:
 **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
+**Run it in the background, started at login (no admin):**
+
+```bash
+abenlux agent install     # autostarts at login and runs in your session, so toasts actually render
+abenlux agent status      # check it
+abenlux agent uninstall   # remove it
+```
+
+`agent install` snapshots your config to `~/.abenlux/agent.env` and drops the right per-OS unit: a
+**systemd `--user`** service (Linux), a **launchd LaunchAgent** (macOS), or a hidden **Startup-folder
+launcher** (Windows — chosen over a scheduled task so it works for a standard, non-admin user). It runs
+as **you**, inside your GUI session, because that's the only place desktop toasts and the D-Bus/Aqua
+notification daemons exist. In org/forward mode the agent also polls the collector for *your* new
+collaboration matches and live-pushes a toast — matching happens centrally, but the nudge still finds you.
+
 ### Make it ultra-smart (optional, almost free)
 
 Point Abenlux at whatever LLM your org already uses to classify intent on the rare prompts that branch
@@ -307,6 +322,7 @@ There is no central, management-readable store of anyone's prompts. That asset n
 
 ```
 abenlux demo / gateway / serve / mock      run the pipeline / edge agent / collector / fake upstream
+abenlux agent install / status / uninstall background capture agent, autostarted at login
 abenlux onboard <tool>                     exact setup for a tool on your OS/shell
 abenlux tiers                              the tool capability matrix
 abenlux cost <model>                       price an interaction
@@ -322,7 +338,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-196 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+203 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, and a Playwright browser test of every dashboard screen and role. The supported CLI tools were
@@ -338,7 +354,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 196 tests
+make test       # 203 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

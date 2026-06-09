@@ -207,6 +207,8 @@ async def whoami(principal: Principal = Depends(current_principal)):
     return {
         "name": principal.display_name,
         "role": principal.role.value,
+        "tenant_id": principal.tenant_id,
+        "org": principal.org,
         "permissions": sorted(p.value for p in principal.permissions),
     }
 

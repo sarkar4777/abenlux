@@ -92,6 +92,8 @@
     <div id="mgmt" class="hide">
       <div id="driftBanner"></div>
       <div class="grid kpis" id="mgmtKpis"></div>
+      <h2>Reuse-Yield Ledger <span class="hint">money NOT spent · re-solves the org avoided · k-anonymity gated · shown beside spend, never inside it</span></h2>
+      <div class="card" id="reuseYield"></div>
       <h2>Budgets <span class="hint">spend vs ceiling · run-rate forecast to period end</span></h2>
       <div class="card" id="budgets"></div>
       <h2>What the AI spend is for <span class="hint">net-new build vs keeping the lights on · purpose from branch or prompt</span></h2>
@@ -104,6 +106,15 @@
       <h2>Model mix</h2>
       <div class="card" id="byModel"></div>
       <div class="note" id="privacyNote"></div>
+    </div>
+
+    <!-- benchmark -->
+    <div id="bench" class="hide">
+      <div class="grid kpis" id="benchKpis"></div>
+      <div class="card" id="benchReadiness"></div>
+      <h2 style="margin-top:16px">Your tenant vs the org cohort <span class="hint">ratios only · k-anonymity per tenant · differential-privacy noised · percentiles, never another tenant's raw figure</span></h2>
+      <div class="card" id="benchTable"></div>
+      <div class="note" id="benchNote"></div>
     </div>
 
     <!-- developer -->
@@ -224,15 +235,36 @@ function driftBanner(trend){
   return `<div class="card" style="border-color:var(--warn);color:var(--warn);margin-bottom:16px">⚠ Spend drift - ${bits.join(" · ")}</div>`;
 }
 
+function reuseYieldView(ry){
+  if(!ry) return '<div class="muted">no data yet</div>';
+  if(!ry.reuse_avoided_usd){
+    const sup = ry.events_suppressed ? ` ${ry.events_suppressed} reuse(s) seen but still below k=${ry.k} developers, so not yet credited.` : "";
+    return `<div class="muted">No reuse credited yet.${sup} When the broker surfaces an already-solved pattern to someone about to re-solve it, the avoided re-solve is booked here.</div>`;
+  }
+  const head = `<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:10px">
+    <div class="val" style="color:var(--good);font-size:28px">${fmtUSD(ry.reuse_avoided_usd)}</div>
+    <div class="muted">estimated re-solves avoided this period · ${ry.events_credited} reuse(s) · k-gated at ${ry.k}</div></div>`;
+  const rows = (ry.by_work_type||[]);
+  if(!rows.length) return head;
+  const max = Math.max(1, ...rows.map(r=>r.avoided_usd));
+  const bars = rows.map(r=>{const w=Math.max(2,Math.round(100*r.avoided_usd/max));
+    return `<div class="bar-row"><div class="bar-label">${r.work_type}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:var(--good)"></div></div>
+      <div class="bar-val" style="color:var(--good)">${fmtUSD(r.avoided_usd)}</div></div>`;}).join("");
+  return head+bars;
+}
+
 async function loadManagement(){
   const rep = await api("/api/report");
   const band = rep.recoverable_resent_history_usd;
+  const ry = rep.reuse_yield || {};
   $("#driftBanner").innerHTML = driftBanner(rep.trend);
   $("#mgmtKpis").innerHTML =
     kpi("Total AI spend", fmtUSD(rep.total_cost_usd), `${fmtN(rep.total_events)} calls · ${rep.org_actors} developers`)+
+    kpi("Reuse-yield (avoided)", fmtUSD(ry.reuse_avoided_usd||0), "money NOT spent - re-solves avoided")+
     kpi("Orphan spend", (rep.orphan_token_share*100).toFixed(1)+"%", "unattributed - the headline waste metric")+
-    kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling")+
-    kpi("Total tokens", fmtN(rep.total_tokens), rep.unpriced_events? rep.unpriced_events+" unpriced":"all priced");
+    kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling");
+  $("#reuseYield").innerHTML = reuseYieldView(ry);
   $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
   $("#investment").innerHTML = investmentView(rep.investment, rep.by_work_type||[]);
   $("#newInitiatives").innerHTML = newInitiativesView(rep.new_initiatives);
@@ -268,22 +300,70 @@ async function loadDeveloper(){
 
 async function consent(id){ await post(`/api/collab/${id}/consent`); loadDeveloper(); }
 
+const fmtRatio = (k,v) => v==null ? "—" : (k==="cost_per_1k_tokens" ? fmtUSD(v) : (v*100).toFixed(1)+"%");
+
+function benchTable(out){
+  const comp = out.comparison||[];
+  if(!comp.length){
+    const r = out.your_ratios||{};
+    const rows = Object.keys(r).map(k=>`<div class="bar-row"><div class="bar-label">${k.replace(/_/g," ")}</div>
+      <div class="bar-track"></div><div class="bar-val">${fmtRatio(k,r[k])}</div></div>`).join("");
+    return '<div class="muted" style="margin-bottom:10px">Your own ratios (the cohort comparison unlocks once enough tenants qualify):</div>'+rows;
+  }
+  const head = `<div class="bar-row" style="grid-template-columns:1fr 90px 110px 130px;font-weight:600;color:var(--muted)">
+    <div>metric</div><div>you</div><div>cohort median</div><div>your standing</div></div>`;
+  const rows = comp.map(c=>{
+    const good = c.higher_is_better ? c.your_percentile>=0.5 : c.your_percentile>=0.5;
+    const col = c.your_percentile>=0.66 ? "var(--good)" : (c.your_percentile<=0.33 ? "var(--bad)" : "var(--warn)");
+    const pctl = Math.round(c.your_percentile*100);
+    const dir = c.higher_is_better ? "higher is better" : "lower is better";
+    return `<div class="bar-row" style="grid-template-columns:1fr 90px 110px 130px">
+      <div class="bar-label" title="${dir}">${c.label}</div>
+      <div class="bar-val">${fmtRatio(c.metric,c.you)}</div>
+      <div class="bar-val muted">${fmtRatio(c.metric,c.cohort_median)}</div>
+      <div class="bar-val" style="color:${col}">${pctl}th pctile</div></div>`;
+  }).join("");
+  return head+rows;
+}
+
+async function loadBenchmark(){
+  const out = await api("/api/benchmark");
+  const rd = out.readiness;
+  $("#benchKpis").innerHTML =
+    kpi("Your tenant", out.focus_tenant, `org: ${out.org}`)+
+    kpi("Cohort", `${rd.cohort_size}/${rd.k_tenants_required}`, "qualifying tenants (k-anon)")+
+    kpi("Status", rd.ready? "ready" : "building", rd.ready? "comparison live" : "needs more tenants");
+  const tone = rd.ready ? "var(--good)" : "var(--warn)";
+  $("#benchReadiness").innerHTML = `<div style="display:flex;align-items:center;gap:10px">
+    <span style="color:${tone};font-size:18px">${rd.ready?"✓":"◷"}</span>
+    <div><b>${rd.ready?"Cohort ready":"Cohort building"}</b>
+    <div class="muted">${rd.reason}</div></div></div>`;
+  $("#benchTable").innerHTML = benchTable(out);
+  $("#benchNote").textContent =
+    `Privacy: ${out.privacy.note}. k=${out.privacy.k} developers per tenant, at least ${out.privacy.k_tenants} tenants before any comparison, epsilon=${out.privacy.dp_epsilon}.`;
+}
+
 let TAB = "dev";
 function renderTabs(){
   const canAgg = ME.permissions.includes("view_aggregates");
+  const canBench = ME.permissions.includes("view_benchmark");
   const tabs = [];
   if(canAgg) tabs.push(["mgmt","Management"]);
+  if(canBench) tabs.push(["bench","Benchmark"]);
   tabs.push(["dev","My view"]);
-  if(!canAgg) TAB="dev";
+  if(!canAgg && TAB==="mgmt") TAB="dev";
+  if(!canBench && TAB==="bench") TAB="dev";
   $("#tabs").innerHTML = tabs.map(([k,l])=>`<div class="tab ${k===TAB?'active':''}" onclick="switchTab('${k}')">${l}</div>`).join("");
   $("#mgmt").classList.toggle("hide", TAB!=="mgmt");
+  $("#bench").classList.toggle("hide", TAB!=="bench");
   $("#dev").classList.toggle("hide", TAB!=="dev");
 }
-function switchTab(k){ TAB=k; renderTabs(); if(k==="mgmt") loadManagement(); else loadDeveloper(); }
+function switchTab(k){ TAB=k; renderTabs(); if(k==="mgmt") loadManagement(); else if(k==="bench") loadBenchmark(); else loadDeveloper(); }
 
 async function boot(){
   $("#login").classList.add("hide"); $("#app").classList.remove("hide");
-  $("#who").innerHTML = `<span>${ME.name}</span><span class="pill">${ME.role}</span>
+  const tenantPill = (ME.tenant_id && ME.tenant_id!=="default") ? `<span class="pill">${ME.tenant_id}</span>` : "";
+  $("#who").innerHTML = `<span>${ME.name}</span><span class="pill">${ME.role}</span>${tenantPill}
     <button onclick="signOut()">Sign out</button>`;
   TAB = ME.permissions.includes("view_aggregates") ? "mgmt" : "dev";
   renderTabs();

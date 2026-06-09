@@ -136,7 +136,9 @@ class LedgerStore:
         total = round(sum(r[3] for r in credited), 2)
         by_work_type: dict[str, float] = {}
         for r in credited:
-            by_work_type[r[1]] = round(by_work_type.get(r[1], 0.0) + r[3], 2)
+            # accumulate raw then round ONCE below - rounding each step drops sub-cent reuses to zero
+            by_work_type[r[1]] = by_work_type.get(r[1], 0.0) + r[3]
+        by_work_type = {w: round(v, 2) for w, v in by_work_type.items()}
         return {
             "tenant": tenant,
             "reuse_avoided_usd": total,
@@ -199,7 +201,9 @@ class PostgresLedgerStore(LedgerStore):
         total = round(sum(r[3] for r in credited), 2)
         by_work_type: dict[str, float] = {}
         for r in credited:
-            by_work_type[r[1]] = round(by_work_type.get(r[1], 0.0) + r[3], 2)
+            # accumulate raw then round ONCE below - rounding each step drops sub-cent reuses to zero
+            by_work_type[r[1]] = by_work_type.get(r[1], 0.0) + r[3]
+        by_work_type = {w: round(v, 2) for w, v in by_work_type.items()}
         return {
             "tenant": tenant, "reuse_avoided_usd": total, "events_credited": len(credited),
             "events_suppressed": len(rows) - len(credited),

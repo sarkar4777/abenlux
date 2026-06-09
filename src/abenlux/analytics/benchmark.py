@@ -170,10 +170,16 @@ def _median(sorted_xs: list[float]) -> float:
     return sorted_xs[mid] if n % 2 else (sorted_xs[mid - 1] + sorted_xs[mid]) / 2.0
 
 
+# the published point ratios carry a light DP perturbation as defense in depth. the AUTHORITATIVE
+# comparison is `your_percentile`, computed on the raw ratios - a rank within the cohort reveals only
+# ordering (the whole point of a benchmark), never another tenant's figure. sensitivity is kept small
+# because a per-tenant ratio already averages over many records, so one record's influence is tiny.
+_DP_SENSITIVITY = 0.003
+
+
 def _noise(value: float, gate: KAnonymityGate) -> float:
-    # DP noise scaled to a small-magnitude ratio: ratios live in [0,~]. clamp negatives to 0 so noise
-    # can't print a nonsensical sub-zero rate. sensitivity is tiny because these are bounded ratios.
-    noised = value + gate.laplace_noise(sensitivity=0.01)
+    # ratios live in [0,~]. clamp negatives to 0 so noise can't print a nonsensical sub-zero rate.
+    noised = value + gate.laplace_noise(sensitivity=_DP_SENSITIVITY)
     return max(0.0, noised)
 
 

@@ -151,33 +151,46 @@ A **tenant** is an org unit or geography of one org (`acme-eu`, `acme-us`). The 
 `tenant_id` on every `DerivedRecord` (from `ABEN_TENANT`, alongside `residency`), so a tenant is a
 content-free partition of the warehouse, not a separate database. `store._tenant_pred` builds the
 `WHERE tenant_id=?` fragment threaded through every aggregate (`totals`, `rollup`,
-`orphan_token_share`, `time_bounds`, `new_objectives`, `objective_window_cost`); `"default"` also
-matches `NULL` so rows written before the column existed still belong to the default tenant. The
-registry (`tenants.py`) maps `tenant_id → {org, display_name, residency}`. RBAC carries
-`Principal.tenant_id`/`org`: a principal reports **only its own tenant**, and `_resolve_report_tenant`
-lets it pull a sibling tenant **only if that tenant is in its own org** — cross-tenant *detail* never
-crosses the org wall. Cross-tenant *comparison* is the benchmark, and is the only cross-tenant surface.
+`orphan_token_share`, `time_bounds`, `window_stats`, `new_objectives`, `objective_window_cost`) — so
+the report, budgets, **and the spend-drift trend** all scope to one tenant. `"default"` also matches
+`NULL` so legacy rows belong to the default tenant, and the edge `claim_null_tenant`s its pre-tenant
+history when it adopts a named tenant, so nothing is orphaned. The registry (`tenants.py`) maps a
+**global** `tenant_id → {org, display_name, residency}` and *refuses to reassign an id across orgs* —
+otherwise one org could re-create a rival's `tenant_id`, flip its org, and read its reports through the
+org gate. RBAC carries `Principal.tenant_id`/`org`: a principal reports **only its own tenant**, and
+`_resolve_report_tenant` lets it pull a sibling tenant **only if that tenant is in its own org** —
+cross-tenant *detail* never crosses the org wall. Cross-tenant *comparison* is the benchmark, the only
+cross-tenant surface. The collaboration broker carries `org` on every `TopicSignal` too, so two orgs
+sharing one collector are never introduced to each other.
 
 **Reuse-Yield Ledger** (`ledger.py`) books money **not** spent. When `_match_centrally` fires a broker
-match, `_book_avoided` records one content-free `AvoidedCostEvent` `{tenant, objective, work_type,
-cluster, estimated_avoided_usd, mode, actors, ts}`, valued at the tenant's **median cost-to-solve** for
-that objective×work_type (`store.actor_costs_for` → `estimate_avoided`: median across developers ×
-mode factor — full for solved-reuse, half for live-duplication). The dedup key is
-`tenant∷pair∷objective∷work_type∷cluster`, so re-polling a live match never double-books; a confirmed
-solved-reuse may upgrade a prior live-duplication for the same opportunity. `summary()` is **k-anonymity
-gated**: only events whose cost-to-solve was backed by ≥k developers (the `actors` count snapshotted at
-book time) are credited, so the savings line can never expose a sub-k group. It is surfaced **beside**
-spend (`/api/savings`, and `reuse_yield` on `/api/report`), never summed into it.
+match, `_book_avoided` records one content-free *opportunity* keyed on stable ids only
+(`tenant∷pair∷objective∷work_type` — never the display label, so label drift can't re-book), with the
+mode upgrade (live-duplication → solved-reuse) applied as an **atomic conditional upsert**. The dollar
+value and the k-gate are **recomputed at read time** in `summary(store, …)` from the live derived data:
+for each `(objective, work_type)` it takes every developer's total spend (`store.actor_costs_for`) and
+computes a **winsorized mean** cost-to-solve (trim the extremes, average the rest) × a mode factor
+(full for solved-reuse, half for live-duplication). Read-time recompute makes the figure deterministic
+(no ingest-order dependence) and self-healing (an opportunity booked below k is credited automatically
+once enough developers solve that work); the winsorized mean is robust to a runaway session **and** is
+never any single developer's exact spend. It is **k-anonymity gated** (credited only when ≥k developers
+back the cost-to-solve) and surfaced **beside** spend (`/api/savings`, `reuse_yield` on `/api/report`),
+never summed into it.
 
 **Cross-tenant Benchmark Exchange** (`analytics/benchmark.py`) compares tenants of one org on **ratios
 only** — `cost_per_1k_tokens`, `cache_hit_ratio`, `orphan_share`, `net_new_share`, `reuse_share`, … —
-so no absolute size leaks. Three walls: a tenant joins the cohort only if it clears **k-anonymity**
+so no absolute size leaks. The walls: a tenant joins the cohort only if it clears **k-anonymity**
 (≥k developers); the comparison is released only above a **cohort threshold** (`k_tenants`, default 3);
-and published point ratios carry **Laplace DP** noise. A tenant's standing is a **percentile** within
-the cohort, computed on the *raw* ratios (a rank reveals only ordering — the whole point of a
-benchmark), while the displayed figures are DP-noised as defense in depth. The cohort is assembled from
-the org's registered tenants; only the unconfigured `default` org falls back to raw `distinct_tenants()`
-so a named org can never pull another org's tenants into its cohort.
+an **unpriced** tenant (cost 0, model not in the price table) is excluded from cost-denominated metrics
+so it can't collapse the cohort minimum; and cohort **order statistics are withheld for small cohorts**
+— `min`/`max` only above 5 tenants, the `median` only above 4 — because for three tenants the
+min/median/max *are* the three tenants' near-raw ratios. A tenant's standing is a **percentile** within
+the cohort. All released figures for a metric (your value, min, median, max, and the percentile) are
+derived from **one Laplace-noised, sorted series**, so the row is internally consistent (you within
+`[min,max]`, `min ≤ median ≤ max`) and DP-perturbed as defense in depth. The cohort is the org's
+registered tenants; only the unconfigured `default` org falls back to `distinct_tenants()`, and even
+then admits a raw id only if the registry shows it unregistered or owned by the same org, so a named
+org's tenants never leak into the default cohort.
 
 ## The background agent
 
@@ -220,7 +233,7 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **233 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **241 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full
@@ -229,7 +242,10 @@ collaboration (`test_intent_corpus.py`, `test_collab_corpus.py`); the background
 units (`test_agent.py`); a simulated team exercising suggestions, collaboration walls/consent, and
 drift (`test_multiuser.py`, `test_exhaustive.py`); and the multi-tenant plane with the Reuse-Yield
 Ledger and Benchmark Exchange (`test_tenants_ledger_benchmark.py`) — tenant scoping, k-anon savings,
-DP-noised cross-tenant percentiles, and the org/residency walls (cross-org tenant access → 403).
+DP-noised cross-tenant percentiles, and the org/residency walls (cross-org tenant access → 403). That
+last suite was hardened by a multi-agent adversarial review (independent attackers + skeptic
+verification): the org-hijack 409, the read-time-recompute ledger, the winsorized cost-to-solve, the
+small-cohort order-stat withholding, and the broker org wall each pin a confirmed finding.
 
 Two reproducible Docker harnesses back the claims that can't live in `make test` (they need Docker and
 real tool images): [`examples/tool-verification`](examples/tool-verification/) drives Gemini CLI,

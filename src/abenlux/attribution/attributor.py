@@ -125,13 +125,14 @@ MAINTENANCE = {"fix", "refactor", "perf", "chore", "docs", "test"}
 # the highest-scoring work type above the floor wins. runs on the edge on REDACTED text and only
 # the resulting label persists, never the prompt. strong signals first.
 _PROMPT_SIGNALS = [
-    ("fix", r"\b(fix|bug|broken|failing test|stack ?trace|traceback|exception|error|crash|regression|doesn'?t work|not working|null pointer)\b", 3),
-    ("test", r"\b(unit tests?|integration tests?|write tests?|add tests?|test coverage|test cases?|pytest|jest|mock this)\b", 3),
-    ("docs", r"\b(document this|docstring|write (the )?readme|add comments?|explain (this|the) (code|function))\b", 3),
-    ("refactor", r"\b(refactor|clean ?up|rename|extract (a )?(method|function|class)|simplif|restructure|dedupe|tidy)\b", 3),
-    ("perf", r"\b(optimi[sz]e|too slow|performance|latency|speed (this|it) up|reduce (memory|allocations)|bottleneck)\b", 3),
-    ("exploration", r"\b(how (do|should) i|what(?:'s| is) the best|compare|trade-?offs?|options? for|prototype|proof of concept|poc|spike|evaluate|which (library|approach))\b", 2),
-    ("feature", r"\b(add|implement|build|create|scaffold|new (feature|endpoint|api|page|screen|component|service|app|module)|support for|wire up|integrate)\b", 2),
+    ("fix", r"\b(fix|bug|broken|fails?|failing|stack ?trace|traceback|exception|errors?|crash(?:es|ing)?|regression|throw(?:s|ing|n)?|raises?|doesn'?t work|not working|times? ?out|timeout|null pointer|segfault|sort it out|debug|stop(?:s|ped)? working|wrong|incorrect|unexpected|off by|misbehav|returns the wrong|nan|race condition|deadlock|flaky)\b", 3),
+    ("test", r"\b(unit tests?|integration tests?|e2e tests?|write tests?|add tests?|test coverage|test cases?|pytest|jest|vitest|mock this|increase coverage)\b", 3),
+    ("docs", r"\b(document this|docstring|write (a |the )?readme|update (the )?readme|add comments?|explain (this|the) (code|function)|write (the )?docs|api docs)\b", 3),
+    ("refactor", r"\b(refactor|clean ?up|rename|extract\b.{0,40}?\b(helper|method|function|class|module|logic)|reusable|simplif|restructure|de-?dup(?:e|licate)?|tidy|untangle|split (this|it) (up|into))\b", 3),
+    ("perf", r"\b(optimi[sz]e|(?:too |really |very )?slow|sluggish|performance|latency|speed (it |this )?up|reduce (memory|allocations|time)|bottleneck|faster|profile (this|it))\b", 3),
+    ("chore", r"\b(bump|dependenc(?:y|ies)|lock ?file|set ?up ci|ci(?: |/)(pipeline|cd)|github actions?|dockerfile|docker image|cut a release|tag it|release v?\d|upgrade\b.{0,30}\bto\b|pin (the )?version|pre-?commit|lint config)\b", 2),
+    ("exploration", r"\b(how (do|should|can|would) (i|we)|what(?:'s| is) the best|compare|versus|trade-?offs?|options? for|prototype|proof of concept|poc|spike|evaluate|which (library|approach|one|framework))\b", 2),
+    ("feature", r"\b(add|implement|build|create|scaffold|new (?:\w+ ){0,2}(feature|endpoint|api|page|screen|component|service|app|module|importer|flow)|support (for|sso|saml)|wire up|integrate|set up (a |the )?(new )?(service|endpoint|page|api)|make it possible|allow (users?|the user|them|people) to|let (users?|me|them|people)|i (need|want) (a|an|to)|ability to|enable)\b", 2),
 ]
 _PROMPT_PATTERNS = [(label, re.compile(rx, re.IGNORECASE), w) for label, rx, w in _PROMPT_SIGNALS]
 

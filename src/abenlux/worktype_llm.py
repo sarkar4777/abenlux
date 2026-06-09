@@ -16,7 +16,6 @@ Configurable per the LLM the org already uses: OpenAI, Azure OpenAI, Anthropic (
 from __future__ import annotations
 
 import os
-import re
 from functools import lru_cache
 from typing import Optional
 
@@ -30,51 +29,11 @@ _DEFAULT_MODEL = {
 
 
 
-# imperative starters and intent signal words used to score sentences for extractive compression.
-# research (LLMLingua-2, keyphrase methods) shows extracting salient sentences beats truncation and
-# avoids the 15-47% accuracy drop long contexts cause - so we send the LLM only the intent-dense bits.
-_IMPERATIVE = ("fix", "add", "implement", "build", "create", "refactor", "rename", "extract",
-               "optimi", "speed", "write", "document", "test", "investigate", "debug", "design",
-               "compare", "evaluate", "explore", "support", "integrate", "scaffold", "simplif",
-               "remove", "update", "migrate", "review", "explain")
-_SIGNAL = ("bug", "error", "broken", "failing", "crash", "exception", "traceback", "slow",
-           "performance", "latency", "bottleneck", "endpoint", "feature", "new", "test", "tests",
-           "refactor", "docs", "readme", "prototype", "spike", "poc", "saga", "schema", "api")
-_SENT = re.compile(r"(?<=[.!?])\s+|\n+")
-
-
 def _compress(text: str, *, max_chars: int = 900) -> str:
-    """extractive intent compression: keep the salient, intent-bearing sentences from a long prompt.
-    deterministic and free. for short prompts returns them as-is."""
-    t = text.strip()
-    if len(t) <= max_chars:
-        return t
-    sents = [s.strip() for s in _SENT.split(t) if s.strip()]
-    if not sents:
-        return t[:max_chars]
-    scored = []
-    for i, s in enumerate(sents):
-        low = s.lower()
-        words = low.split()
-        score = 0
-        # an imperative verb anywhere is a strong intent signal ("please fix...", "can you optimize")
-        if any(w.startswith(v) for w in words for v in _IMPERATIVE):
-            score += 3
-        score += sum(1 for w in _SIGNAL if w in low)
-        if i == 0 or i == len(sents) - 1:
-            score += 1
-        if len(s) > 200:
-            score -= 1
-        scored.append((score, i, s))
-    # take the highest-scoring sentences within budget, then restore original order
-    keep, used = [], 0
-    for score, i, s in sorted(scored, key=lambda x: (-x[0], x[1])):
-        if used + len(s) > max_chars and keep:
-            break
-        keep.append((i, s))
-        used += len(s) + 1
-    keep.sort()
-    return " ".join(s for _, s in keep) or t[:max_chars]
+    """extractive intent compression for the LLM: the shared salient-intent extractor, so the work-type
+    classifier and the collaboration embedding agree on what the prompt is actually about."""
+    from abenlux.salience import salient_intent
+    return salient_intent(text, max_chars=max_chars)
 
 
 def _match(reply: str) -> Optional[str]:

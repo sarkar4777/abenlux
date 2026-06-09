@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-188%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-196%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -68,13 +68,13 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 |---|---|
 | 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
 | ♻️ **Cache-aware savings** | Separates fresh input from cache reads/writes per call, reports a **prompt-cache hit ratio**, and flags resent context that *isn't* being cached — the one token-saving lever with **zero loss of detail**, because the exact same context is sent, just billed as a cache hit. |
-| 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**. Traced to the ticket. |
+| 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**, traced to the ticket. Long, code-heavy, multi-part prompts are reduced to their **salient intent** first, so a pasted stack trace doesn't get mislabelled a "fix". 98.6% accuracy on a 69-prompt corpus, 100% on the net-new/maintenance split. |
 | 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
 | 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
 | 🕸 **Developer-local knowledge graph** | Each developer owns a private, on-device graph of their objectives, tickets, purpose mix, tools, and self-learned vocabulary. View it anytime with `abenlux graph`. |
 | 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
 | 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
-| 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers, Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
+| 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers — paired on **keyphrase topic vectors** with an **objective-aware** bar, so two people on the same problem match even when phrased differently, and generic shared vocabulary doesn't. Precision-first (a false pairing is worse than a miss): **100% precision** on the labelled corpus. Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
 | 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. |
 | 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
 | 🪶 **Minimal, optional LLM** | When branch + patterns + learned vocabulary all miss, one tiny cached call (OpenAI / Azure / Claude / Gemini) with **extractive prompt compression** classifies intent for fractions of a cent. |
@@ -88,7 +88,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 188 tests
+make test             # 196 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -322,14 +322,23 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-188 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+196 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, and a Playwright browser test of every dashboard screen and role. The supported CLI tools were
 additionally exercised end-to-end against a running gateway (see the verification note above).
 
+Two labelled accuracy corpora keep the parts management and developers rely on honest:
+
+- **Intent (work-type)** — 69 prompts spanning terse, verbose, polite, symptom-style, multi-part, and
+  code/stack-trace-laden phrasings: **98.6%** label accuracy and **100%** on the net-new-vs-maintenance
+  split management reports ([tests/test_intent_corpus.py](tests/test_intent_corpus.py)).
+- **Collaboration** — labelled task groups across objectives: **100% precision** (it never pairs two
+  people who aren't actually on the same problem) at **100% recall** on the corpus
+  ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
+
 ```bash
-make test       # 188 tests
+make test       # 196 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

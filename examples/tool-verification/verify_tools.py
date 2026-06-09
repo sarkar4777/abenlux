@@ -102,7 +102,8 @@ def main() -> None:
                 "SELECT provider, request_model, input_tokens, output_tokens, ROUND(cost_usd,6), tool "
                 "FROM derived ORDER BY ts").fetchall()
             if not rows:
-                print("  FAIL: no calls captured"); failures += 1
+                print("  FAIL: no calls captured")
+                failures += 1
             for r in rows:
                 print("  OK provider=%s model=%s in=%s out=%s cost=$%s tool=%s" % r)
     finally:

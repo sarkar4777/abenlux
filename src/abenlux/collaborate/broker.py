@@ -55,7 +55,14 @@ class Match:
 
 @dataclass
 class CollaborationBroker:
-    threshold: float = 0.82
+    # the embedding is computed over the prompt's KEYPHRASES (domain terms, see salience.keyphrases),
+    # which separates same-task from different-task cleanly. same objective -> a topic-overlap bar is
+    # enough; a DIFFERENT objective needs a stricter bar, because cross-objective overlap is more often
+    # coincidental than a genuine shared problem. both gates use only content-free fields (embedding +
+    # objective label). these defaults are tuned for the offline keyphrase-hashing embedder; a semantic
+    # embedder ([ml] extra) produces a different cosine scale - override via the constructor if used.
+    threshold: float = 0.40            # same objective (or the reusable solved-pattern corpus)
+    cross_threshold: float = 0.55      # different objective: a stronger topic match required
     max_signals: int = 5000            # bound memory for a central broker across many developers
     signals: list[TopicSignal] = field(default_factory=list)
     _consents: set[tuple[str, str]] = field(default_factory=set)
@@ -72,8 +79,11 @@ class CollaborationBroker:
             if other.actor_pseudonym == sig.actor_pseudonym or not self._wall_ok(sig, other):
                 continue
             sim = cosine(sig.topic_embedding, other.topic_embedding)
-            if sim >= self.threshold:
-                mode = "solved_reuse" if (other.is_solved or sig.is_solved) else "live_duplication"
+            solved = other.is_solved or sig.is_solved
+            same_obj = bool(sig.topic_label and other.topic_label and sig.topic_label == other.topic_label)
+            bar = self.threshold if (same_obj or solved) else self.cross_threshold
+            if sim >= bar:
+                mode = "solved_reuse" if solved else "live_duplication"
                 matches.append(
                     Match(sig.actor_pseudonym, other.actor_pseudonym, round(sim, 3), other.topic_label, mode)
                 )

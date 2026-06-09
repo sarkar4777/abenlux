@@ -18,6 +18,7 @@ Two hard walls enforced here:
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -66,6 +67,7 @@ class CollaborationBroker:
     max_signals: int = 5000            # bound memory for a central broker across many developers
     signals: list[TopicSignal] = field(default_factory=list)
     _consents: set[tuple[str, str]] = field(default_factory=set)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def _wall_ok(self, x: TopicSignal, y: TopicSignal) -> bool:
         # never match across different clients, never across residency boundaries
@@ -74,6 +76,10 @@ class CollaborationBroker:
         return x.residency == y.residency
 
     def submit(self, sig: TopicSignal) -> list[Match]:
+        with self._lock:                                  # mutated from concurrent capture threads
+            return self._submit_locked(sig)
+
+    def _submit_locked(self, sig: TopicSignal) -> list[Match]:
         matches: list[Match] = []
         for other in self.signals:
             if other.actor_pseudonym == sig.actor_pseudonym or not self._wall_ok(sig, other):

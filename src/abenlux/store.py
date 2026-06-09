@@ -19,9 +19,26 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 from abenlux.schema import DerivedRecord
+
+
+class _Result:
+    """a materialized query result. one store connection is shared across the gateway's BackgroundTask
+    threadpool, and a lazy DB-API cursor held across threads corrupts state - so _exec fetches under the
+    lock and hands back a fully-read result that exposes the small cursor surface the helpers use."""
+
+    def __init__(self, rows: list, description):
+        self._rows = rows
+        self.description = description
+
+    def fetchall(self) -> list:
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
 
 _COLUMNS = [
     "event_id", "ts", "tier", "provider", "actor_pseudonym", "request_model",
@@ -33,7 +50,7 @@ _COLUMNS = [
     "is_retry_loop", "retry_similarity",
     "objective_id", "objective_label", "is_orphan",
     "attribution_method", "attribution_confidence",
-    "ticket_id", "work_type", "work_type_source",
+    "ticket_id", "work_type", "work_type_source", "residency",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -51,7 +68,7 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           is_retry_loop {int_type}, retry_similarity {real_type},
           objective_id TEXT, objective_label TEXT, is_orphan {int_type},
           attribution_method TEXT, attribution_confidence {real_type},
-          ticket_id TEXT, work_type TEXT, work_type_source TEXT
+          ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
@@ -83,7 +100,7 @@ def _values(r: DerivedRecord) -> tuple:
         int(r.is_retry_loop), r.retry_similarity,
         r.objective_id, r.objective_label, int(r.is_orphan),
         r.attribution_method, r.attribution_confidence,
-        r.ticket_id, r.work_type, r.work_type_source,
+        r.ticket_id, r.work_type, r.work_type_source, r.residency,
     )
 
 
@@ -95,8 +112,22 @@ class _BaseStore:
     def _q(self, sql: str) -> str:
         return sql if self._ph == "?" else sql.replace("?", self._ph)
 
+    def _lock(self) -> threading.RLock:
+        lk = self.__dict__.get("_rlock")
+        if lk is None:
+            lk = self.__dict__["_rlock"] = threading.RLock()
+        return lk
+
     def _exec(self, sql: str, params: tuple = ()):
-        return self.conn.execute(self._q(sql), params)
+        # serialize all connection access (the gateway writes from many threads) and materialize the
+        # result so the connection is never pinned by a lazy cursor handed to another thread.
+        with self._lock():
+            cur = self.conn.execute(self._q(sql), params)
+            try:
+                rows = cur.fetchall()
+            except Exception:
+                rows = []                          # INSERT/DDL/upsert without a result set
+            return _Result(rows, cur.description)
 
     @staticmethod
     def _rows(cur) -> list[dict]:
@@ -250,12 +281,14 @@ class DerivedStore(_BaseStore):
         return {r[1] for r in self.conn.execute("PRAGMA table_info(derived)").fetchall()}
 
     def insert(self, r: DerivedRecord) -> None:
-        self._exec(
-            f"INSERT OR REPLACE INTO derived ({','.join(_COLUMNS)}) "
-            f"VALUES ({','.join('?' for _ in _COLUMNS)})",
-            _values(r),
-        )
-        self.conn.commit()
+        # hold the lock across execute+commit so concurrent BackgroundTask writers don't interleave
+        with self._lock():
+            self.conn.execute(
+                f"INSERT OR REPLACE INTO derived ({','.join(_COLUMNS)}) "
+                f"VALUES ({','.join('?' for _ in _COLUMNS)})",
+                _values(r),
+            )
+            self.conn.commit()
 
 
 class PostgresDerivedStore(_BaseStore):

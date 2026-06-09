@@ -95,11 +95,15 @@ class WorkTypeLearner:
     # ----- classifying input -----
     def patterns(self) -> dict[str, set[str]]:
         """label -> set of learned terms, hot-reloaded if the file changed under us."""
-        self._reload_if_changed()
-        out: dict[str, set[str]] = {}
-        for term, label in self.learned.items():
-            out.setdefault(label, set()).add(term)
-        return out
+        # hold the lock across reload + iteration: observe() mutates self.learned from capture threads,
+        # and a hot-reload replaces it wholesale - reading it unsynchronized risks a dict-changed-during-
+        # iteration error and a torn read. _reload_if_changed/_load assume the lock is already held.
+        with self._lock:
+            self._reload_if_changed()
+            out: dict[str, set[str]] = {}
+            for term, label in self.learned.items():
+                out.setdefault(label, set()).add(term)
+            return out
 
     # ----- persistence -----
     def _load(self) -> None:

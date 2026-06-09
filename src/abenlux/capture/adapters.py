@@ -304,10 +304,13 @@ def parse_gemini_request(body: dict) -> tuple[list[Message], Optional[str]]:
 
 
 def _gemini_usage(meta: dict) -> Usage:
+    # Gemini's promptTokenCount INCLUDES cachedContentTokenCount, so split the cached part out of
+    # input - otherwise it is billed at both the full input rate and the cache-read rate (double count).
+    cached = meta.get("cachedContentTokenCount", 0) or 0
     return Usage(
-        input_tokens=meta.get("promptTokenCount", 0) or 0,
+        input_tokens=max(0, (meta.get("promptTokenCount", 0) or 0) - cached),
         output_tokens=meta.get("candidatesTokenCount", 0) or 0,
-        cache_read_tokens=meta.get("cachedContentTokenCount", 0) or 0,
+        cache_read_tokens=cached,
     )
 
 
@@ -397,6 +400,17 @@ def build_event(
             out, usage, finish, rmodel = parse_gemini_response_body(_as_json(response_raw))
     else:
         raise ValueError(f"no adapter for provider {provider}")
+
+    # a truncated/partial stream (client disconnect, dropped final usage frame) can leave the
+    # authoritative counts missing - estimate from the reassembled text and FLAG it, rather than
+    # silently reporting 0 output tokens (which would understate spend without saying so).
+    if streamed:
+        if out and usage.output_tokens == 0:
+            usage.output_tokens = estimate_tokens(out)
+            ev.tokens_estimated = True
+        if usage.input_tokens == 0 and usage.cache_read_tokens == 0 and ev.messages:
+            usage.input_tokens = estimate_tokens(ev.input_text())
+            ev.tokens_estimated = True
 
     # backfill the request model from the response when the request body omitted it (Gemini puts the
     # model in the URL path, not the body), so pricing has a model to match instead of falling to $0.

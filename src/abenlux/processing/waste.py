@@ -20,6 +20,7 @@ backend via `similarity_fn` for semantic (not lexical) matching.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Callable
@@ -68,8 +69,15 @@ class SessionWasteMonitor:
 
     _prompts: list[str] = field(default_factory=list)
     _answers: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def observe(self, event) -> list[WasteSignal]:
+        # one monitor per actor, but an actor's calls can land on concurrent capture threads, so the
+        # shared history lists are mutated under a lock (otherwise the waste math sees a torn list).
+        with self._lock:
+            return self._observe(event)
+
+    def _observe(self, event) -> list[WasteSignal]:
         signals: list[WasteSignal] = []
         prompt = event.input_text()
         answer = event.output_text()

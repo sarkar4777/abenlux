@@ -88,6 +88,8 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     by_work_type = _gate_rows(store.rollup("work_type"), gate)
     investment = {"net_new": 0.0, "maintenance": 0.0, "unclassified": 0.0}
     for r in store.rollup("work_type"):
+        if not gate.allows(r["actors"]):
+            continue  # a work-type with fewer than k developers is suppressed here too, not summed in
         lbl = r["label"]
         cat = "net_new" if lbl in NET_NEW else ("maintenance" if lbl in MAINTENANCE else "unclassified")
         investment[cat] += r["cost"]

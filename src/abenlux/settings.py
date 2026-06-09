@@ -38,6 +38,9 @@ class Settings:
     actor: str | None = os.getenv("ABEN_ACTOR") or None
     k_anon: int = int(os.getenv("ABEN_K_ANON", "5"))
     dp_epsilon: float = float(os.getenv("ABEN_DP_EPSILON", "1.0"))
+    # the data-residency region of this device/tenant. forwarded on each derived record so the central
+    # collaboration broker never matches across a residency boundary. set per-region in deployment.
+    residency: str = os.getenv("ABEN_RESIDENCY", "eu")
 
     @property
     def hmac_bytes(self) -> bytes:

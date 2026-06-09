@@ -151,7 +151,9 @@ def classify_from_prompt(text: Optional[str], learned: Optional[dict] = None) ->
     if learned:
         for label, terms in learned.items():
             for term in terms:
-                if term in low:
+                # word-boundary match, not raw substring: a learned term "test" must not fire on
+                # "latest"/"contest". terms can be multi-word, so the boundary wraps the whole phrase.
+                if term and re.search(rf"\b{re.escape(term)}\b", low):
                     scores[label] = scores.get(label, 0) + 2
     if not scores:
         return "unknown"

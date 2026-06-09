@@ -189,5 +189,9 @@ class DerivedRecord:
     work_type: Optional[str] = None           # feature | fix | refactor | exploration | chore | ...
     work_type_source: Optional[str] = None    # "branch" | "prompt" | "none" (how we know)
 
+    # the edge's data-residency region, forwarded so the CENTRAL broker can enforce the residency wall
+    # (it has no other way to know - OTel/derived records carry no region otherwise).
+    residency: str = "eu"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

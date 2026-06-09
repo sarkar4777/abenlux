@@ -19,6 +19,15 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
+
+
+def _sd_quote(a: str) -> str:
+    """quote one ExecStart argument for systemd. systemd is not a shell, but it honours double-quoted
+    arguments with C-style escapes - so a launcher path containing a space stays one argument."""
+    if a and all(c.isalnum() or c in "/._-=:@+" for c in a):
+        return a
+    return '"' + a.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 APP_NAME = "Abenlux Agent"
 LABEL = "com.abenlux.agent"                      # launchd label / systemd unit base
@@ -90,7 +99,7 @@ def _systemd_unit_path() -> Path:
 def _install_linux(port: int) -> str:
     unit = _systemd_unit_path()
     unit.parent.mkdir(parents=True, exist_ok=True)
-    argv = " ".join(_launch_argv() + ["--port", str(port)])
+    argv = " ".join(_sd_quote(a) for a in _launch_argv() + ["--port", str(port)])
     unit.write_text(
         f"[Unit]\nDescription={APP_NAME}\nAfter=network-online.target\n\n"
         f"[Service]\nType=simple\nEnvironmentFile=-{ENV_FILE}\nExecStart={argv}\n"
@@ -124,9 +133,10 @@ def _install_macos(port: int) -> str:
     plist = _plist_path()
     plist.parent.mkdir(parents=True, exist_ok=True)
     args = _launch_argv() + ["--port", str(port)]
-    prog = "".join(f"        <string>{a}</string>\n" for a in args)
+    prog = "".join(f"        <string>{_xml_escape(a)}</string>\n" for a in args)
     env = load_env_pairs()
-    envxml = "".join(f"        <key>{k}</key><string>{v}</string>\n" for k, v in env.items())
+    envxml = "".join(f"        <key>{_xml_escape(k)}</key><string>{_xml_escape(v)}</string>\n"
+                     for k, v in env.items())
     plist.write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '

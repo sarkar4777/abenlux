@@ -1,4 +1,4 @@
-from abenlux.capture.diff import SessionHistoryTracker, unchanged_prefix_chars
+from abenlux.capture.diff import SessionHistoryTracker, _fingerprint, unchanged_prefix_chars
 from abenlux.schema import Message
 
 
@@ -7,7 +7,8 @@ def _msgs(*pairs):
 
 
 def test_unchanged_prefix_counts_only_leading_identical_run():
-    prev = _msgs(("user", "a"), ("assistant", "bb"), ("user", "ccc"))
+    # the baseline is stored as fingerprints (role, content-hash, len) - never raw content
+    prev = [_fingerprint(m) for m in _msgs(("user", "a"), ("assistant", "bb"), ("user", "ccc"))]
     curr = _msgs(("user", "a"), ("assistant", "bb"), ("user", "different"))
     assert unchanged_prefix_chars(prev, curr) == 1 + 2  # 'a' + 'bb', stops at divergence
 

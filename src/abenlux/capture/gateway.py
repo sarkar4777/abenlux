@@ -75,6 +75,18 @@ _NOTIFY = os.getenv("ABEN_NOTIFY", "1") != "0"  # desktop toasts, on by default,
 _debounce = Debouncer()
 
 
+def _log_capture_error(where: str) -> None:
+    # capture must never raise into the request path, but silently swallowing also hid a real bug
+    # (a dropped Gemini stream) for a while. so we surface it: a one-liner always, full traceback on
+    # ABEN_DEBUG. capture failing should be visible, not invisible.
+    import sys
+    import traceback
+    if os.getenv("ABEN_DEBUG"):
+        traceback.print_exc()
+    else:
+        print(f"abenlux: capture error in {where} (set ABEN_DEBUG=1 for the traceback)", file=sys.stderr)
+
+
 def _toast(kind: str, line: str) -> None:
     # raise a native desktop notification so the developer sees the nudge wherever they are,
     # without opening anything. debounced per kind so identical signals do not spam.
@@ -249,11 +261,12 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
             event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
             waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
         )
+        result.record.residency = getattr(SETTINGS, "residency", "eu")  # stamp the edge region for the residency wall
         _sink.insert(result.record)  # forward to collector or write the shared store
         _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
         _surface_to_developer(result, event)  # nudges + collab -> developer's private feed
     except Exception:
-        pass
+        _log_capture_error("_capture")
 
 
 async def _proxy(request: Request, provider: Provider, path: str, upstream: str | None = None,
@@ -282,11 +295,15 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
     captured = bytearray()
 
     async def tee():
-        async for chunk in upstream.aiter_raw():
-            captured.extend(chunk)
-            yield chunk
-        await upstream.aclose()
-        await client.aclose()
+        # close the upstream response + client even if the downstream tool disconnects mid-stream
+        # (the generator is then cancelled), otherwise the connection and AsyncClient leak.
+        try:
+            async for chunk in upstream.aiter_raw():
+                captured.extend(chunk)
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
 
     def after() -> None:
         # runs as a Starlette BackgroundTask AFTER the full response is streamed to the tool.
@@ -341,25 +358,29 @@ async def gemini_generate(request: Request, model_path: str):
 def _ingest_otlp(payload: dict) -> int:
     n = 0
     for event in events_from_otlp(payload):
-        # a tool that self-reports an actor (Claude Code sends a hashed user.id) wins, else fall
-        # back to the device's own actor. work-context (repo/branch) comes from the device env,
-        # since OTel telemetry does not carry git context.
-        tool_actor = event.actor_raw
-        work = current_work_context()
-        if event.work.tool:  # OTel parser already set the tool, keep it over the env default
-            work.tool = event.work.tool
-            work.app_category = event.work.app_category or work.app_category
-        event.work = work
-        actor = tool_actor or current_actor()
-        event.actor_raw = actor
-        result = process(
-            event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
-            waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
-        )
-        _sink.insert(result.record)
-        _dev_store.insert(result.record)
-        _surface_to_developer(result, event)  # same private feed, regardless of tool/tier
-        n += 1
+        try:
+            # a tool that self-reports an actor (Claude Code sends a hashed user.id) wins, else fall
+            # back to the device's own actor. work-context (repo/branch) comes from the device env,
+            # since OTel telemetry does not carry git context.
+            tool_actor = event.actor_raw
+            work = current_work_context()
+            if event.work.tool:  # OTel parser already set the tool, keep it over the env default
+                work.tool = event.work.tool
+                work.app_category = event.work.app_category or work.app_category
+            event.work = work
+            actor = tool_actor or current_actor()
+            event.actor_raw = actor
+            result = process(
+                event, kg=_kg, hmac_key=SETTINGS.hmac_bytes,
+                waste_monitor=_monitor_for(actor), embed_fn=_embed, work_type_classifier=_classifier, work_type_learner=_learner,
+            )
+            result.record.residency = getattr(SETTINGS, "residency", "eu")
+            _sink.insert(result.record)
+            _dev_store.insert(result.record)
+            _surface_to_developer(result, event)  # same private feed, regardless of tool/tier
+            n += 1
+        except Exception:
+            _log_capture_error("_ingest_otlp")  # one bad event must not drop the whole OTLP batch
     return n
 
 async def _otel_route(request: Request) -> JSONResponse:

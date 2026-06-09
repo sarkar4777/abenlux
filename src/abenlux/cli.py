@@ -115,10 +115,17 @@ def cmd_agent(args) -> None:
     from abenlux.agent import service
     action = getattr(args, "action", "status") or "status"
     if action == "run":
-        # load the snapshotted config BEFORE the gateway module imports Settings, then run it
+        # load the snapshotted config into the environment, then start the gateway in a CHILD process.
+        # Settings reads the environment once at import, and this module already imported it - so the
+        # gateway must be (re-)imported in a fresh process for agent.env to actually take effect.
+        import os
+        import subprocess
+        import sys
         n = service.load_env_file()
         print(f"abenlux agent: loaded {n} config vars from {service.ENV_FILE}, starting capture on :{args.port}")
-        cmd_gateway(args)
+        raise SystemExit(subprocess.run(
+            [sys.executable, "-m", "abenlux.cli", "gateway", "--port", str(args.port)],
+            env=os.environ.copy()).returncode)
     elif action == "install":
         print(service.install(args.port))
         print(" config snapshot:", service.ENV_FILE, "(edit it and re-run `abenlux agent install` to update)")

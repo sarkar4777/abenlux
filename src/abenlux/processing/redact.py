@@ -43,8 +43,12 @@ _PII: list[tuple[str, re.Pattern]] = [
     ("phone", re.compile(r"\b\+?\d[\d\s().-]{7,}\d\b")),
 ]
 
-# long opaque tokens with high entropy that escaped the named patterns
-_LONG_TOKEN = re.compile(r"\b[A-Za-z0-9+/_=-]{32,}\b")
+# opaque secrets that escaped the named patterns. two complementary gates so we catch both random
+# base64 blobs AND hex-encoded secrets (a 40-char hex API key / hash has only 16 symbols, so its
+# entropy is ~3.5 - under the 4.0 bar - and would otherwise slip through). the hex rule is charset-
+# specific (pure hex, 24+ chars = a token/hash, not prose) so it does not touch normal long identifiers.
+_LONG_TOKEN = re.compile(r"\b[A-Za-z0-9+/_=-]{24,}\b")
+_HEX_SECRET = re.compile(r"\b[0-9a-fA-F]{24,}\b")
 _ENTROPY_THRESHOLD = 4.0  # bits/char, random base64 ~6, English prose ~2.5-3.2
 
 
@@ -84,7 +88,14 @@ def redact(text: str) -> RedactionReport:
     for label, pat in ordered:
         text = _sub(label, pat, text)
 
-    # pass 2: high-entropy leftovers
+    # pass 2: PII via precise named patterns - BEFORE the opaque-token sweep, so an email / IBAN is
+    # handled by its own pattern rather than partially consumed by the entropy gate.
+    for label, pat in _PII:
+        text = _sub(label, pat, text)
+
+    # pass 3: opaque secrets that escaped the named patterns - hex tokens, then high-entropy blobs
+    text = _sub("hex_secret", _HEX_SECRET, text)
+
     def entropy_repl(m: re.Match) -> str:
         tok = m.group(0)
         if shannon_entropy(tok) >= _ENTROPY_THRESHOLD:
@@ -92,10 +103,6 @@ def redact(text: str) -> RedactionReport:
             return "<REDACTED:high_entropy>"
         return tok
     text = _LONG_TOKEN.sub(entropy_repl, text)
-
-    # pass 3: PII
-    for label, pat in _PII:
-        text = _sub(label, pat, text)
 
     return RedactionReport(text=text, counts=counts)
 

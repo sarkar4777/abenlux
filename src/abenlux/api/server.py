@@ -115,17 +115,24 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     items = payload if isinstance(payload, list) else [payload]
     store = _store()
     mstore = _matches()
-    n = 0
+    n, rejected = 0, 0
     for d in items:
+        if not isinstance(d, dict):
+            rejected += 1
+            continue
         # accept only known fields, a forwarded record that smuggled a content key is rejected
         clean = {k: v for k, v in d.items() if k in _DERIVED_FIELDS}
-        rec = DerivedRecord(**clean)
-        store.insert(rec)
-        _match_centrally(rec, mstore)
+        try:
+            rec = DerivedRecord(**clean)        # a malformed/mistyped item must not 500 the whole batch
+            store.insert(rec)
+            _match_centrally(rec, mstore)
+        except Exception:
+            rejected += 1
+            continue
         n += 1
     mstore.close()
     store.close()
-    return {"ingested": n}
+    return {"ingested": n, "rejected": rejected}
 
 
 def _match_centrally(rec: DerivedRecord, mstore: MatchStore) -> None:
@@ -137,6 +144,7 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore) -> None:
     sig = TopicSignal(
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
         topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
+        residency=getattr(rec, "residency", None) or "eu",  # enforce the residency wall centrally
     )
     for m in _broker.submit(sig):
         mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)

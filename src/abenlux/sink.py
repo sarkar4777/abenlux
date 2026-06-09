@@ -47,7 +47,16 @@ class SqliteSink:
 def _default_post(url: str, batch: list[dict], token: str, timeout: float) -> bool:
     import httpx
     r = httpx.post(url, json=batch, headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
-    return r.status_code < 300
+    if r.status_code < 300:
+        return True
+    if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+        # a PERMANENT client error (bad token, malformed) - retrying forever would wedge the spool
+        # head behind a poison batch, so we drop it (loudly) instead of blocking delivery of the rest.
+        import sys
+        print(f"abenlux: collector rejected a derived batch ({r.status_code}), dropping {len(batch)} "
+              f"records (check ABEN_INGEST_TOKEN)", file=sys.stderr)
+        return True
+    return False  # 5xx / 408 / 429 -> transient, keep and retry
 
 
 class HttpSink:
@@ -65,6 +74,7 @@ class HttpSink:
         timeout: float = 5.0,
         post: Callable[[str, list, str, float], bool] | None = None,
         clock: Callable[[], float] | None = None,
+        auto_flush: bool = False,
     ):
         self.endpoint = url.rstrip("/") + "/v1/derived"
         self.token = token
@@ -80,11 +90,24 @@ class HttpSink:
         self._last_flush = self._clock()
         self.dropped = 0
         atexit.register(self.flush)
+        if auto_flush:
+            # a background heartbeat flushes an aged, partial batch even when no new call arrives to
+            # trigger the size/age check (otherwise the tail of a session can sit buffered indefinitely)
+            self._stop = threading.Event()
+            threading.Thread(target=self._age_loop, daemon=True).start()
+
+    def _age_loop(self) -> None:
+        while not self._stop.wait(self.max_age_s):
+            try:
+                if self._buf:
+                    self.flush()
+            except Exception:
+                pass
 
     def insert(self, record: DerivedRecord) -> None:
         with self._lock:
             self._buf.append(record.to_dict())
-            if len(self._buf) > self.max_spool:
+            while len(self._buf) > self.max_spool:
                 self._buf.popleft()           # bounded spool: drop oldest under sustained outage
                 self.dropped += 1
             due = len(self._buf) >= self.batch_size or (self._clock() - self._last_flush) >= self.max_age_s
@@ -92,29 +115,35 @@ class HttpSink:
             self.flush()
 
     def flush(self) -> None:
+        # take the batch OUT of the buffer before the (slow) POST, so concurrent inserts and any spool
+        # overflow during the POST can't shift indices and make the success-path pop the wrong records.
         with self._lock:
             if not self._buf:
                 self._last_flush = self._clock()
                 return
             batch = list(self._buf)
+            self._buf.clear()
+            self._last_flush = self._clock()
         ok = False
         try:
             ok = self._post(self.endpoint, batch, self.token, self.timeout)
         except Exception:
             ok = False
-        with self._lock:
-            if ok:
-                # remove exactly what we sent, new arrivals during the post stay buffered
-                for _ in range(min(len(batch), len(self._buf))):
+        if not ok:
+            with self._lock:
+                self._buf.extendleft(reversed(batch))     # put it back at the FRONT, order preserved
+                while len(self._buf) > self.max_spool:
                     self._buf.popleft()
-            self._last_flush = self._clock()
+                    self.dropped += 1
 
     def close(self) -> None:
+        if getattr(self, "_stop", None):
+            self._stop.set()
         self.flush()
 
 
 def build_sink(settings, *, local_store) -> DerivedSink:
     """choose the sink from config. forward to the collector if a URL is set, else write local."""
     if settings.collector_url:
-        return HttpSink(settings.collector_url, settings.ingest_token)
+        return HttpSink(settings.collector_url, settings.ingest_token, auto_flush=True)
     return SqliteSink(local_store)

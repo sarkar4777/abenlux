@@ -76,7 +76,9 @@ def salient_intent(text: str | None, *, max_chars: int = 400) -> str:
     # a long prompt: strip code/data noise, then keep only the intent-bearing sentences. we score even
     # when the cleaned text fits the budget, so low-signal filler ("here is the module...") is dropped
     # too - that filler is exactly what smears the topic vector and weakens matching.
-    cleaned = strip_noise(t) or t
+    # a prompt that is ALL code/data (strip_noise empties it) has no prose intent - return nothing
+    # rather than falling back to the raw code, so we don't embed/classify on a wall of source.
+    cleaned = strip_noise(t)
     sents = [s.strip() for s in _SENT.split(cleaned) if s.strip()]
     if len(sents) <= 1:
         return (sents[0] if sents else cleaned)[:max_chars]

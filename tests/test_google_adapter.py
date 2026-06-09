@@ -21,7 +21,7 @@ GEMINI_BODY = {
 def test_gemini_stream_reassembles_and_takes_final_usage():
     text, usage, finish, model = parse_gemini_stream(GEMINI_STREAM)
     assert text == "Use a saga."
-    assert usage.input_tokens == 120
+    assert usage.input_tokens == 80          # promptTokenCount 120 minus the 40 cached (split out)
     assert usage.output_tokens == 8
     assert usage.cache_read_tokens == 40
     assert finish == ["STOP"]
@@ -46,5 +46,5 @@ def test_build_event_google_request_roles_normalized():
     ev = build_event(provider=Provider.GOOGLE, request_body=req, response_raw=GEMINI_STREAM, streamed=True)
     roles = [m.role for m in ev.messages]
     assert roles == ["system", "user", "assistant"]  # gemini 'model' -> 'assistant'
-    assert ev.usage.input_tokens == 120
+    assert ev.usage.input_tokens == 80               # 120 prompt - 40 cached
     assert ev.output_text() == "Use a saga."

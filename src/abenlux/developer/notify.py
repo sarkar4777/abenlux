@@ -43,8 +43,9 @@ def register_windows_aumid() -> bool:
 
 
 def _windows(message: str) -> None:
-    # built-in WinRT toast, no install needed on Win10/11, raised under our registered AUMID
-    msg = message.replace("'", "`'")
+    # built-in WinRT toast, no install needed on Win10/11, raised under our registered AUMID.
+    # inside a PowerShell single-quoted string an apostrophe is escaped by DOUBLING it, not a backtick.
+    msg = message.replace("'", "''")
     ps = (
         "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,"
         "ContentType=WindowsRuntime]|Out-Null;"
@@ -61,7 +62,8 @@ def _windows(message: str) -> None:
 
 
 def _macos(message: str) -> None:
-    msg = message.replace('"', '\\"')
+    # escape backslashes first, then quotes, so a trailing backslash can't break the AppleScript string
+    msg = message.replace("\\", "\\\\").replace('"', '\\"')
     subprocess.run(["osascript", "-e", f'display notification "{msg}" with title "{_TITLE}"'],
                    capture_output=True, timeout=5)
 

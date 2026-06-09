@@ -76,7 +76,9 @@ def budget_status(
         if not obj.monthly_budget_usd:
             continue
         spent = store.objective_window_cost(obj.id, period_start, now + 1e-9)
-        forecast = (spent / elapsed) if elapsed > 0 else spent
+        # floor the elapsed fraction used for the run-rate projection: a small spend a few minutes into
+        # the period must not extrapolate to an absurd monthly forecast (caps the multiple at ~25x).
+        forecast = spent / max(elapsed, 0.04)
         budget = float(obj.monthly_budget_usd)
         out.append(BudgetStatus(
             objective_id=obj.id, label=obj.label, budget_usd=budget,

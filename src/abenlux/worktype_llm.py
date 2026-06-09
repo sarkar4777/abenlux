@@ -16,7 +16,7 @@ Configurable per the LLM the org already uses: OpenAI, Azure OpenAI, Anthropic (
 from __future__ import annotations
 
 import os
-from functools import lru_cache
+from collections import OrderedDict
 from typing import Optional
 
 _ALLOWED = ("feature", "fix", "refactor", "perf", "exploration", "chore", "docs", "test")
@@ -104,10 +104,25 @@ class WorkTypeClassifier:
             return None
 
 
-@lru_cache(maxsize=4096)
+_CACHE: "OrderedDict[tuple, str]" = OrderedDict()  # (classifier id, text) -> label
+_CACHE_MAX = 4096
+
+
 def _cached(clf: WorkTypeClassifier, text: str) -> Optional[str]:
-    # cache keyed on (classifier identity, truncated text) so repeated phrasings never re-ask
-    return clf.classify(text)
+    # cache keyed on (classifier identity, compressed text) so repeated phrasings never re-ask. only
+    # SUCCESSFUL labels are cached - a transient LLM/network failure returns None and must be retried,
+    # not pinned forever (the bug an lru_cache here would cause).
+    key = (id(clf), text)
+    if key in _CACHE:
+        _CACHE.move_to_end(key)
+        return _CACHE[key]
+    label = clf.classify(text)
+    if label is not None:
+        _CACHE[key] = label
+        _CACHE.move_to_end(key)
+        while len(_CACHE) > _CACHE_MAX:
+            _CACHE.popitem(last=False)
+    return label
 
 
 def _env(*names: str, default: str = "") -> str:

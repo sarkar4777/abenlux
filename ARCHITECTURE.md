@@ -247,7 +247,13 @@ last suite was hardened by a multi-agent adversarial review (independent attacke
 verification): the org-hijack 409, the read-time-recompute ledger, the winsorized cost-to-solve, the
 small-cohort order-stat withholding, and the broker org wall each pin a confirmed finding.
 
-Two reproducible Docker harnesses back the claims that can't live in `make test` (they need Docker and
-real tool images): [`examples/tool-verification`](examples/tool-verification/) drives Gemini CLI,
-Codex, and opencode through a running gateway, and [`examples/agent-verification`](examples/agent-verification/)
-verifies the Linux background agent and a real `notify-send` toast received by a notification daemon.
+Three reproducible Docker harnesses back the claims that can't live in `make test` (they need Docker):
+[`examples/tool-verification`](examples/tool-verification/) drives Gemini CLI, Codex, and opencode
+through a running gateway; [`examples/agent-verification`](examples/agent-verification/) verifies the
+Linux background agent and a real `notify-send` toast received by a notification daemon; and
+[`examples/deep-e2e`](examples/deep-e2e/) stands up the **whole stack** in one container — a mock
+upstream, the collector, and one edge gateway per tenant — then drives ~23 developers across 5 tenants
+of 2 orgs through multi-turn traffic and asserts **63 checks** spanning every role (developer, manager,
+finance, admin), tenant scoping, k-anon suppression, the reuse-yield ledger, the benchmark cohort, the
+org wall, double-blind consent, budget overrun, and the auth/ingest-hardening attacks — all on data
+produced by real calls, nothing seeded.

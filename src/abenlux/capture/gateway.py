@@ -131,9 +131,13 @@ _collab_state = {"refreshed": -1e18, "seen": OrderedDict()}
 
 
 def _poll_collab_matches(pseudonym: str) -> list[dict]:
-    """fetch this developer's collaboration matches from the collector, return only NEW ones. polled
-    on a TTL, keyed by the device token + the caller's own pseudonym. best-effort, never raises."""
-    if not SETTINGS.collector_url or not pseudonym:
+    """fetch THIS developer's collaboration matches from the collector, return only NEW ones. the
+    collector binds the result to the authenticated developer, so we present the developer's own
+    principal token (ABEN_TOKEN), never the shared device token - the device token must not be able
+    to select whose matches are returned. best-effort, never raises."""
+    import os as _os
+    dev_token = _os.getenv("ABEN_TOKEN")
+    if not SETTINGS.collector_url or not dev_token:
         return []
     now = time.perf_counter()
     if now - _collab_state["refreshed"] < _COLLAB_TTL:
@@ -143,7 +147,7 @@ def _poll_collab_matches(pseudonym: str) -> list[dict]:
     try:
         r = httpx.Client(timeout=3.0).get(
             SETTINGS.collector_url.rstrip("/") + "/v1/collab-status",
-            headers={"Authorization": f"Bearer {SETTINGS.ingest_token}", "X-Aben-Pseudonym": pseudonym})
+            headers={"Authorization": f"Bearer {dev_token}"})
         if r.status_code == 200:
             seen = _collab_state["seen"]
             for m in r.json().get("matches", []):

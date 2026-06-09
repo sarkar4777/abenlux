@@ -106,6 +106,22 @@ async def health():
 _DERIVED_FIELDS = set(DerivedRecord.__dataclass_fields__.keys())
 
 
+def _harden_inbound(rec: DerivedRecord) -> None:
+    """the edge is on the developer's machine, so a buggy or hostile one could forge a record. the
+    collector is the authoritative source of spend: re-derive cost from the (content-free) token facts
+    rather than trusting a caller-supplied cost_usd (which could under-report to $0 or inflate the org
+    total). also re-redact the free-text metadata fields as defense in depth - they should be slugs."""
+    from abenlux.pricing import cost_usd
+    from abenlux.processing.redact import redact
+    cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
+                  cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
+    rec.cost_usd, rec.cost_priced = cb.total, cb.priced
+    for f in ("repo", "objective_label", "ticket_id", "work_type", "tool"):
+        v = getattr(rec, f, None)
+        if isinstance(v, str) and v:
+            setattr(rec, f, redact(v).text)
+
+
 @app.post("/v1/derived")
 async def ingest_derived(request: Request, authorization: str | None = Header(default=None)):
     token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
@@ -124,6 +140,7 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
         clean = {k: v for k, v in d.items() if k in _DERIVED_FIELDS}
         try:
             rec = DerivedRecord(**clean)        # a malformed/mistyped item must not 500 the whole batch
+            _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
             store.insert(rec)
             _match_centrally(rec, mstore)
         except Exception:
@@ -264,23 +281,18 @@ async def budget_status_for_edge(authorization: str | None = Header(default=None
 
 
 @app.get("/v1/collab-status")
-async def collab_status_for_edge(
-    authorization: str | None = Header(default=None),
-    x_aben_pseudonym: str | None = Header(default=None),
-):
-    # content-free collaboration matches for ONE pseudonym, so the edge agent can live-push a toast
-    # when a colleague starts on the same problem (matching itself happens centrally - the edge can't,
-    # it only sees its own signals). device ingest token + the caller's own pseudonym; no peer identity
-    # is returned (that needs a mutual double-blind consent via /api/collab), only topic + mode + state.
-    token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
-    if token not in SETTINGS.ingest_tokens:
-        raise HTTPException(status_code=401, detail="invalid ingest token")
-    if not x_aben_pseudonym:
-        return {"matches": []}
+async def collab_status_for_edge(principal: Principal = Depends(current_principal)):
+    # content-free collaboration matches for the AUTHENTICATED developer, so the edge agent can
+    # live-push a toast when a colleague starts on the same problem. the pseudonym is taken from the
+    # authenticated principal, never a request header - the shared device token authenticates the
+    # device class, not a developer, so it must not be sufficient to choose whose feed is returned
+    # (that was an IDOR: device token + a forged pseudonym enumerated anyone's matches). no peer
+    # identity is returned, only topic + mode + state (peers reveal on a mutual double-blind consent).
+    _need(principal, Permission.VIEW_OWN)
     mstore = _matches()
     out = [{"id": m["id"], "topic": m["topic"], "similarity": m["similarity"], "mode": m["mode"],
-            "mutual": mstore.mutually_consented(x_aben_pseudonym, m["peer"])}
-           for m in mstore.for_owner(x_aben_pseudonym)]
+            "mutual": mstore.mutually_consented(principal.pseudonym, m["peer"])}
+           for m in mstore.for_owner(principal.pseudonym)]
     mstore.close()
     return {"matches": out}
 

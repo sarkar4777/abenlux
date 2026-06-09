@@ -82,6 +82,39 @@ def test_sink_requeues_failed_batch_in_order_no_loss():
     assert posts and posts[0] == ["e0", "e1", "e2"]
 
 
+def test_collector_reprices_authoritatively_and_re_redacts():
+    # red-team: the collector trusted caller-supplied cost_usd (poison to $9999 or under-report to $0)
+    from abenlux.api.server import _harden_inbound
+    poison = DerivedRecord(event_id="x", ts=0.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                           request_model="claude-opus-4-8", input_tokens=1, output_tokens=1,
+                           duplicate_history_tokens=0, cost_usd=9999.99, cost_priced=True)
+    _harden_inbound(poison)
+    assert poison.cost_usd < 0.01 and poison.cost_priced   # re-derived from token facts, 9999 ignored
+    stuffed = DerivedRecord(event_id="y", ts=0.0, tier="t", provider="p", actor_pseudonym="px",
+                            request_model="m", input_tokens=1, output_tokens=1, duplicate_history_tokens=0,
+                            repo="repo sk-ant-SECRET1234567890abcdefghij here")
+    _harden_inbound(stuffed)
+    assert "sk-ant-SECRET" not in (stuffed.repo or "")     # free-text re-redacted as defense in depth
+
+
+def test_management_budgets_are_k_anonymity_gated(tmp_path):
+    # red-team: the budgets array leaked sub-k objective spend, bypassing the k-anon gate
+    from abenlux.store import DerivedStore
+    from abenlux.analytics.reports import management_report
+    from abenlux.attribution.attributor import KnowledgeGraph, Objective
+    s = DerivedStore(str(tmp_path / "r.db"))
+    solo = DerivedRecord(event_id="e1", ts=0.0, tier="t", provider="p", actor_pseudonym="only-dev",
+                         request_model="m", input_tokens=10, output_tokens=10, duplicate_history_tokens=0,
+                         cost_usd=5.0, objective_id="obj-x", objective_label="Solo Objective", is_orphan=False)
+    s.insert(solo)
+    kg = KnowledgeGraph()
+    kg.add_objective(Objective("obj-x", "Solo Objective", "client", monthly_budget_usd=100))
+    rep = management_report(s, k=3, kg=kg)
+    b = next(x for x in rep["budgets"] if x["label"] == "Solo Objective")
+    assert b["suppressed"] and b["spent_usd"] is None      # one developer -> spend hidden in budgets too
+    s.close()
+
+
 def test_classifier_does_not_cache_a_transient_failure():
     from abenlux import worktype_llm
     worktype_llm._CACHE.clear()

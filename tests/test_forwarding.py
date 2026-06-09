@@ -129,4 +129,6 @@ def test_full_edge_to_collector_loop(tmp_path, monkeypatch):
     rep = collector.get("/api/report", headers={"Authorization": "Bearer mgr-token"}).json()
     by_obj = {r["label"]: r for r in rep["by_objective"]}
     assert by_obj["ObjA"]["suppressed"] is False
-    assert round(by_obj["ObjA"]["cost"], 2) == round(1.23 * 5, 2)
+    # the collector re-prices authoritatively from the (content-free) token facts and IGNORES the edge's
+    # claimed cost_usd of 1.23 - opus 1000 input + 100 output is $0.0075/record, not $1.23
+    assert round(by_obj["ObjA"]["cost"], 4) == round(0.0075 * 5, 4)

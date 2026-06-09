@@ -258,6 +258,9 @@ def cmd_report(args) -> None:
     if rep.get("budgets"):
         print("\n budgets (spend vs ceiling, run-rate forecast):")
         for b in rep["budgets"]:
+            if b.get("suppressed"):
+                print(f"   {b['label']:<34} [spend hidden: <{rep['privacy']['k']} developers]")
+                continue
             flag = {"over": "OVER", "at_risk": "AT-RISK", "ok": "ok"}[b["status"]]
             print(f"   {b['label']:<34} ${b['spent_usd']:>9,.2f}/${b['budget_usd']:<9,.0f} "
                   f"{b['pct']*100:4.0f}%  forecast ${b['forecast_usd']:>9,.2f}  [{flag}]")

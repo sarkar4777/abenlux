@@ -81,7 +81,20 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     if kg is not None:
         from abenlux.analytics.budget import budget_status, current_month_bounds
         ps, pe, now = current_month_bounds()
-        budgets = [b.to_dict() for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now)]
+        # k-anonymity also applies to budgets: an objective with 1-2 developers must not expose its
+        # spend/forecast here (it would bypass the gate that suppresses the same group in by_objective).
+        obj_actors = {r["label"]: r["actors"] for r in store.rollup("objective")}
+        for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now):
+            row = b.to_dict()
+            actors = obj_actors.get(b.label, 0)
+            if 0 < actors < k:                          # sub-k and non-empty -> hide the spend figures
+                for f in ("spent_usd", "pct", "forecast_usd", "projected_overrun_usd"):
+                    row[f] = None
+                row["status"] = "suppressed"
+                row["suppressed"] = True
+            else:
+                row["suppressed"] = False
+            budgets.append(row)
 
     # WHAT the spend is for: purpose mix + net-new vs maintenance investment + new initiatives
     from abenlux.attribution.attributor import MAINTENANCE, NET_NEW

@@ -80,24 +80,27 @@ def test_windows_login_launcher(sandbox, monkeypatch):
     assert not vbs.exists()
 
 
-def test_collab_status_endpoint_is_content_free(monkeypatch):
+def test_collab_status_endpoint_binds_to_authenticated_principal(monkeypatch):
     import os
 
     from fastapi.testclient import TestClient
 
-    from abenlux.api.server import app
+    from abenlux.api.server import app, _principals
     from abenlux.developer.matches import MatchStore
+    dev_pseudo = _principals.resolve("dev-token").pseudonym
     ms = MatchStore(os.environ["ABEN_MATCH_DB"])
-    ms.record("pseudoA", "pseudoB", "Acme - Checkout", 0.91, "live_duplication")
+    ms.record(dev_pseudo, "px_peer", "Acme - Checkout", 0.91, "live_duplication")
     ms.close()
     c = TestClient(app)
-    ok = c.get("/v1/collab-status",
-               headers={"Authorization": "Bearer dev-ingest-token", "X-Aben-Pseudonym": "pseudoA"})
+    ok = c.get("/v1/collab-status", headers={"Authorization": "Bearer dev-token"})  # the developer
     assert ok.status_code == 200
     matches = ok.json()["matches"]
     assert any(m["topic"] == "Acme - Checkout" and m["mode"] == "live_duplication" for m in matches)
     assert all("peer" not in m for m in matches)                       # never leaks the peer identity
-    assert c.get("/v1/collab-status", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    # the shared device ingest token is NOT a principal and a forged pseudonym header is ignored -
+    # it cannot select whose feed is returned (the IDOR the red-team found, now closed)
+    assert c.get("/v1/collab-status",
+                 headers={"Authorization": "Bearer dev-ingest-token", "X-Aben-Pseudonym": dev_pseudo}).status_code == 401
 
 
 def test_edge_poll_filters_mutual_and_throttles(monkeypatch):
@@ -121,6 +124,7 @@ def test_edge_poll_filters_mutual_and_throttles(monkeypatch):
 
     monkeypatch.setattr(gw, "SETTINGS", SimpleNamespace(collector_url="http://collector", ingest_token="t"))
     monkeypatch.setattr(gw.httpx, "Client", FakeClient)
+    monkeypatch.setenv("ABEN_TOKEN", "alice-token")   # the poll now authenticates as the developer
     gw._collab_state["refreshed"] = -1e18
     gw._collab_state["seen"].clear()
 

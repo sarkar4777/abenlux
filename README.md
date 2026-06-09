@@ -203,7 +203,8 @@ Confirm it's working: run a prompt in your tool, then `abenlux me` — your call
 > Gemini's URL-based streaming flag (capture was being dropped) and its model living in the URL (it
 > priced to $0). Claude Code's usage rides on `claude_code.api_request` **log** events with bare
 > `input_tokens`/`cache_read_tokens` attributes — not the `gen_ai.*` semconv — so it needed its own
-> parser, and its raw `user.email` is dropped at the edge.
+> parser, and its raw `user.email` is dropped at the edge. Reproduce the Gemini/Codex/opencode checks
+> yourself with [`examples/tool-verification`](examples/tool-verification/) (one Docker image, one script).
 
 Everything the developer sees is **private to them**, never the management plane:
 

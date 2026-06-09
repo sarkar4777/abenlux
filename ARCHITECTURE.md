@@ -233,7 +233,7 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **241 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **248 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full

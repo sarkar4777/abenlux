@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-241%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-248%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -75,7 +75,7 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 | 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
 | 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
 | 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers — paired on **keyphrase topic vectors** with an **objective-aware** bar, so two people on the same problem match even when phrased differently, and generic shared vocabulary doesn't. Precision-first (a false pairing is worse than a miss): **100% precision** on the labelled corpus. Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
-| ♻️ **Reuse-Yield Ledger** | Most tools only count money *spent*. This one also books money **not** spent. When the broker surfaces an already-solved pattern to someone about to re-solve it, an avoided re-solve is booked — valued at the tenant's **median cost-to-solve** for that work, **k-anonymity gated**, shown as a savings line *beside* spend, never inside it. The positive mirror of orphan waste. |
+| ♻️ **Reuse-Yield Ledger** | Most tools only count money *spent*. This one also books money **not** spent. When the broker surfaces an already-solved pattern to someone about to re-solve it, an avoided re-solve is booked — valued at the tenant's **winsorized-mean cost-to-solve** for that work (recomputed live, **k-anonymity gated**, never one developer's figure), shown as a savings line *beside* spend, never inside it. The positive mirror of orphan waste. |
 | 🌍 **Cross-tenant Benchmark Exchange** | Tenants are org units / geographies of one org (acme-eu, acme-us, …). Compare them on **ratios only** — cost-per-1k, cache-hit, net-new share, reuse share — with **k-anonymity per tenant**, **differential-privacy** noise, and a **cohort threshold** so no tenant reads another off a too-small cohort. You get a **percentile** within the cohort, never another tenant's raw figure. "Is our US region reusing as much as EU?" answered without either side seeing the other's numbers. |
 | 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. A **background agent** (`abenlux agent install`) starts at login on Linux/macOS/Windows and runs in your own session, so collaboration matches and budget warnings reach you live, even at org scale. |
 | 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
@@ -90,7 +90,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 241 tests
+make test             # 248 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -260,8 +260,12 @@ abenlux serve --host 0.0.0.0 --port 8090
 ```
 
 Open `http://<host>:8090/` and sign in. Managers/finance see the k-anonymized spend→value dashboard
-(budgets, purpose, new initiatives, drift, tool/model mix). Admins manage the knowledge graph. **No
-role can see an individual's rows.** A *central* gateway would see raw prompts before redaction — so
+(budgets, purpose, new initiatives, drift, tool/model mix), a **Benchmark** tab comparing their org's
+tenants, and a read-only roster of those tenants. Admins additionally get a **Tenants** tab to create
+and list org units / geographies. Developers see only their own private view — never tenant
+management, never another individual's rows. Tenant RBAC is enforced server-side: **create needs
+admin** (`MANAGE`), **list needs manager+** (`VIEW_AGGREGATES`), both scoped to the caller's own org.
+Admins manage the knowledge graph. A *central* gateway would see raw prompts before redaction — so
 the edge agent redacts on the device and forwards only the content-free `DerivedRecord`.
 
 ---
@@ -342,7 +346,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-241 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+248 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
@@ -360,7 +364,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 241 tests
+make test       # 248 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

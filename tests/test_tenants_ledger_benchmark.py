@@ -418,6 +418,29 @@ def test_api_report_cross_org_tenant_is_forbidden(tmp_path, monkeypatch):
     assert no.status_code == 403
 
 
+def test_tenant_endpoints_rbac(tmp_path, monkeypatch):
+    # create = admin (MANAGE); list = manager+ (VIEW_AGGREGATES); developers can do neither. locks the
+    # governance posture: a developer never creates or even enumerates tenants.
+    _wire(monkeypatch, tmp_path)
+    # extend the wired principals with a developer in acme
+    from abenlux.privacy.pseudonymize import pseudonymize
+    base = _principals()._by_token
+    base["acme-dev"] = Principal("d@acme", "Dev", Role.DEVELOPER, pseudonymize("d@acme", b"test-key"),
+                                 tenant_id="acme-eu", org="acme")
+    monkeypatch.setattr(server, "_principals", PrincipalStore(base))
+    client = TestClient(server.app)
+
+    def H(tok):
+        return {"Authorization": f"Bearer {tok}"}
+    # create: admin yes, manager no, developer no
+    assert client.post("/api/tenants", json={"tenant_id": "acme-x"}, headers=H("acme-admin")).status_code == 200
+    assert client.post("/api/tenants", json={"tenant_id": "acme-y"}, headers=H("acme-mgr")).status_code == 403
+    assert client.post("/api/tenants", json={"tenant_id": "acme-z"}, headers=H("acme-dev")).status_code == 403
+    # list: manager yes (read-only), developer no
+    assert client.get("/api/tenants", headers=H("acme-mgr")).status_code == 200
+    assert client.get("/api/tenants", headers=H("acme-dev")).status_code == 403
+
+
 def test_api_create_tenant_binds_to_callers_org(tmp_path, monkeypatch):
     _wire(monkeypatch, tmp_path)
     client = TestClient(server.app)

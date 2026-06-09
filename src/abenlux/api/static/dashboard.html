@@ -111,10 +111,29 @@
     <!-- benchmark -->
     <div id="bench" class="hide">
       <div class="grid kpis" id="benchKpis"></div>
+      <div class="card" id="benchCohort" style="margin-bottom:12px"></div>
       <div class="card" id="benchReadiness"></div>
       <h2 style="margin-top:16px">Your tenant vs the org cohort <span class="hint">ratios only · k-anonymity per tenant · differential-privacy noised · percentiles, never another tenant's raw figure</span></h2>
       <div class="card" id="benchTable"></div>
       <div class="note" id="benchNote"></div>
+    </div>
+
+    <!-- tenants (admin) -->
+    <div id="tenants" class="hide">
+      <h2>Tenants <span class="hint">org units / geographies of <span id="tenantOrg"></span> · the set compared in the benchmark · admin only</span></h2>
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:8px">Create a tenant</div>
+        <div class="muted" style="margin-bottom:10px">A tenant is an org unit or geography (e.g. <code>acme-us</code>). Point that region's edges at it with <code>ABEN_TENANT=&lt;id&gt;</code>. The id is global and bound to your org.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="ntId" placeholder="tenant id (e.g. acme-us)" style="flex:1;min-width:180px" />
+          <input id="ntName" placeholder="display name (optional)" style="flex:1;min-width:180px" />
+          <input id="ntRegion" placeholder="region (e.g. us)" style="width:120px" />
+          <button class="consent" onclick="createTenant()">Create tenant</button>
+        </div>
+        <div class="err" id="ntErr" style="margin-top:8px"></div>
+      </div>
+      <h2 style="margin-top:16px">Your org's tenants</h2>
+      <div class="card" id="tenantList"></div>
     </div>
 
     <!-- developer -->
@@ -147,6 +166,14 @@ async function api(path){
 async function post(path){
   const r = await fetch(path,{method:"POST",headers:{Authorization:"Bearer "+TOKEN}});
   return r.json();
+}
+async function postJSON(path, body){
+  const r = await fetch(path,{method:"POST",
+    headers:{Authorization:"Bearer "+TOKEN,"Content-Type":"application/json"},
+    body:JSON.stringify(body)});
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
 }
 
 function signOut(){ localStorage.removeItem("aben_token"); TOKEN=""; ME=null;
@@ -329,6 +356,14 @@ function benchTable(out){
 async function loadBenchmark(){
   const out = await api("/api/benchmark");
   const rd = out.readiness;
+  // read-only roster of the org's registered tenants (the cohort). managers see who they compare with.
+  try{
+    const t = await api("/api/tenants");
+    $("#benchCohort").innerHTML = '<div style="font-weight:600;margin-bottom:8px">Org tenants in the cohort</div>'+
+      tenantTable(t.tenants, {admin:false})+
+      '<div class="muted" style="margin-top:8px">Register more org units to enable the comparison ('+
+      (ME.permissions.includes("manage")?'use the <b>Tenants</b> tab':'ask an admin')+'). A tenant joins the cohort once it clears k-anonymity.</div>';
+  }catch(e){ $("#benchCohort").innerHTML=""; }
   $("#benchKpis").innerHTML =
     kpi("Your tenant", out.focus_tenant, `org: ${out.org}`)+
     kpi("Cohort", `${rd.cohort_size}/${rd.k_tenants_required}`, "qualifying tenants (k-anon)")+
@@ -343,22 +378,54 @@ async function loadBenchmark(){
     `Privacy: ${out.privacy.note}. k=${out.privacy.k} developers per tenant, at least ${out.privacy.k_tenants} tenants before any comparison, epsilon=${out.privacy.dp_epsilon}.`;
 }
 
+function tenantTable(rows, opts){
+  if(!rows||!rows.length) return '<div class="muted">No tenants registered yet.'+(opts&&opts.admin?' Create one above, or run <code>abenlux tenant create &lt;id&gt; --org '+(ME.org||'default')+'</code>.':'')+'</div>';
+  const head = `<div class="bar-row" style="grid-template-columns:1fr 1fr 90px;font-weight:600;color:var(--muted)">
+    <div>tenant id</div><div>display name</div><div>region</div></div>`;
+  return head+rows.map(t=>`<div class="bar-row" style="grid-template-columns:1fr 1fr 90px">
+    <div class="bar-label"><code>${t.tenant_id}</code></div><div>${t.display_name||''}</div>
+    <div class="bar-val">${t.residency||''}</div></div>`).join("");
+}
+
+async function loadTenants(){
+  $("#tenantOrg").textContent = ME.org || "default";
+  const out = await api("/api/tenants");
+  $("#tenantList").innerHTML = tenantTable(out.tenants, {admin:true});
+}
+
+async function createTenant(){
+  const id = $("#ntId").value.trim();
+  $("#ntErr").textContent = "";
+  if(!id){ $("#ntErr").textContent = "tenant id is required"; return; }
+  try{
+    await postJSON("/api/tenants", {tenant_id:id, display_name:$("#ntName").value.trim(), residency:$("#ntRegion").value.trim()});
+    $("#ntId").value=""; $("#ntName").value=""; $("#ntRegion").value="";
+    loadTenants();
+  }catch(e){ $("#ntErr").textContent = e.message; }
+}
+
 let TAB = "dev";
 function renderTabs(){
   const canAgg = ME.permissions.includes("view_aggregates");
   const canBench = ME.permissions.includes("view_benchmark");
+  const canManage = ME.permissions.includes("manage");
   const tabs = [];
   if(canAgg) tabs.push(["mgmt","Management"]);
   if(canBench) tabs.push(["bench","Benchmark"]);
+  if(canManage) tabs.push(["tenants","Tenants"]);
   tabs.push(["dev","My view"]);
   if(!canAgg && TAB==="mgmt") TAB="dev";
   if(!canBench && TAB==="bench") TAB="dev";
+  if(!canManage && TAB==="tenants") TAB="dev";
   $("#tabs").innerHTML = tabs.map(([k,l])=>`<div class="tab ${k===TAB?'active':''}" onclick="switchTab('${k}')">${l}</div>`).join("");
   $("#mgmt").classList.toggle("hide", TAB!=="mgmt");
   $("#bench").classList.toggle("hide", TAB!=="bench");
+  $("#tenants").classList.toggle("hide", TAB!=="tenants");
   $("#dev").classList.toggle("hide", TAB!=="dev");
 }
-function switchTab(k){ TAB=k; renderTabs(); if(k==="mgmt") loadManagement(); else if(k==="bench") loadBenchmark(); else loadDeveloper(); }
+function switchTab(k){ TAB=k; renderTabs();
+  if(k==="mgmt") loadManagement(); else if(k==="bench") loadBenchmark();
+  else if(k==="tenants") loadTenants(); else loadDeveloper(); }
 
 async function boot(){
   $("#login").classList.add("hide"); $("#app").classList.remove("hide");

@@ -109,6 +109,78 @@ abenlux graph         # your personal on-device knowledge graph
 
 ---
 
+## Run it locally (the two halves, step by step)
+
+Abenlux is **two programs**. You run each in its own terminal. They never share memory; the developer
+side redacts on the machine and sends only content-free numbers to the management side over HTTP.
+
+| | Program | Command | Who uses it |
+|---|---|---|---|
+| **Developer side** | the edge agent (capture) | `abenlux gateway` | a developer, on their laptop |
+| **Management side** | the collector + dashboard | `abenlux serve` | IT / finance / managers |
+
+**Step 0 - get the code:**
+
+```bash
+git clone https://github.com/sarkar4777/abenlux
+cd abenlux
+make install          # installs the `abenlux` command (pip install -e ".[dev]")
+```
+
+**The fastest way to see it work (one terminal, all on your machine, no server):**
+
+```bash
+abenlux mock                                                    # a fake model, so no API key/spend
+ABEN_ANTHROPIC_UPSTREAM=http://127.0.0.1:9111 abenlux gateway   # the developer side (new terminal)
+ANTHROPIC_BASE_URL=http://127.0.0.1:8088 <your tool>            # point any AI tool at it (new terminal)
+abenlux me                                                      # see YOUR call, private to you
+abenlux report                                                  # see the management view (reads the local file)
+```
+
+That is "solo mode": no server, everything in a local file. Good for hacking on the code.
+
+**The full picture (developer side talks to a separate management server):** open two terminals. The
+only thing connecting them is a shared secret key and a device token (copy the same values into both).
+
+```bash
+# TERMINAL 1 - the MANAGEMENT side (server + dashboard) on port 8090
+ABEN_HMAC_KEY=shared-secret ABEN_INGEST_TOKEN=device-token \
+ABEN_DB=central.db ABEN_KG=examples/knowledge_graph.example.yaml \
+ABEN_PRINCIPALS=examples/principals.example.yaml \
+abenlux serve --port 8090
+# now open http://127.0.0.1:8090 in a browser and sign in with: mgr-token, fin-token, or admin-token
+
+# TERMINAL 2 - the DEVELOPER side (edge agent), pointed at the server above
+ABEN_HMAC_KEY=shared-secret ABEN_INGEST_TOKEN=device-token \
+ABEN_COLLECTOR_URL=http://127.0.0.1:8090 ABEN_TENANT=acme-eu ABEN_TOKEN=dev-token \
+ABEN_ANTHROPIC_UPSTREAM=http://127.0.0.1:9111 abenlux gateway --port 8088
+# then drive a tool at it like above, and run `abenlux me` for the developer's own view
+```
+
+The example config (`examples/principals.example.yaml`, `examples/knowledge_graph.example.yaml`) ships
+the demo tokens (`dev-token`, `mgr-token`, `fin-token`, `admin-token`) and a few objectives, so you do
+not have to write any config to try it.
+
+## Want to change the code?
+
+```bash
+make test     # run all tests (fast)
+make lint     # style check (ruff)
+make demo     # run the whole pipeline once, offline, to see what a change does
+```
+
+- The code is under [`src/abenlux/`](src/abenlux/). The pure logic (no web/ML) is in `schema`,
+  `pipeline`, `processing`, `attribution`, `analytics`, `privacy`, `pricing` and is the easiest place
+  to start; the network parts are `capture/` (edge) and `api/` (server).
+- Make a change, add a test next to it in [`tests/`](tests/), run `make test` and `make lint`.
+- Two full end-to-end examples you can run with Docker: [`examples/deep-e2e`](examples/deep-e2e/) (one
+  container, the whole stack) and [`examples/multi-dev-e2e`](examples/multi-dev-e2e/) (separate
+  containers per tenant, runs against a real model if you give it a key).
+- See [ARCHITECTURE.md](ARCHITECTURE.md) for how it fits together and [CONTRIBUTING.md](CONTRIBUTING.md)
+  for the rules (the privacy invariants must stay green).
+
+---
+
 ## Stop solving the same problem twice — double-blind collaboration
 
 Across a big team, people burn tokens re-solving what a colleague already cracked. The naive fix — a

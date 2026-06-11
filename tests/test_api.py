@@ -102,7 +102,8 @@ def test_collab_double_blind_consent_reveals_only_on_mutual(client, tmp_path):
     dev = server._principals.resolve("dev-token").pseudonym
     mgr = server._principals.resolve("mgr-token").pseudonym
     ms = server._matches()
-    ms.record_consent(mgr, dev)
+    topic = ms.for_owner(dev)[0]["topic"]      # consent is per-topic; mirror the dev's match topic
+    ms.record_consent(mgr, dev, topic)
     ms.close()
     me2 = client.get("/api/me", headers=_auth("dev-token")).json()
     assert me2["collaboration_matches"][0]["peer_revealed"] == "Morgan Manager"

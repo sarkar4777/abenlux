@@ -46,8 +46,10 @@ def test_match_store_is_owner_scoped(tmp_path):
 def test_match_mutual_consent(tmp_path):
     ms = MatchStore(tmp_path / "m.db")
     ms.record("alice", "bob", "t", 0.9, "live_duplication", ts=1.0)
-    assert ms.mutually_consented("alice", "bob") is False
-    ms.record_consent("alice", "bob")
-    assert ms.mutually_consented("alice", "bob") is False
-    ms.record_consent("bob", "alice")
-    assert ms.mutually_consented("alice", "bob") is True
+    assert ms.mutually_consented("alice", "bob", "t") is False
+    ms.record_consent("alice", "bob", "t")
+    assert ms.mutually_consented("alice", "bob", "t") is False
+    ms.record_consent("bob", "alice", "t")
+    assert ms.mutually_consented("alice", "bob", "t") is True
+    # consent is per-topic: a DIFFERENT topic between the same two is not auto-revealed
+    assert ms.mutually_consented("alice", "bob", "other-topic") is False

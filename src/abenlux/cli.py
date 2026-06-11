@@ -362,7 +362,7 @@ def cmd_collab(args) -> None:
     from abenlux.developer.matches import MatchStore
     from abenlux.privacy.pseudonymize import pseudonymize
     pseudo = pseudonymize(SETTINGS.actor or current_actor(), SETTINGS.hmac_bytes)
-    ms = MatchStore(os.getenv("ABEN_MATCH_DB", "abenlux-matches.db"))
+    ms = MatchStore(os.getenv("ABEN_MATCH_DB"))   # private ~/.abenlux by default
     rows = [{"id": m["id"], "peer": m["peer"], "topic": m["topic"], "similarity": m["similarity"],
              "mode": m["mode"], "peer_revealed": None} for m in ms.for_owner(pseudo)]
     if action == "list":
@@ -371,9 +371,10 @@ def cmd_collab(args) -> None:
         return
     mid = _resolve_match_id(args.id, rows)
     if mid is not None:
-        peer = next(m["peer"] for m in rows if m["id"] == mid)
-        ms.record_consent(pseudo, peer)
-        _report_intro(ms.mutually_consented(pseudo, peer), None)
+        row = next(m for m in rows if m["id"] == mid)
+        peer, topic = row["peer"], row["topic"]
+        ms.record_consent(pseudo, peer, topic)               # consent is scoped to this topic
+        _report_intro(ms.mutually_consented(pseudo, peer, topic), None)
     ms.close()
 
 
@@ -423,7 +424,7 @@ def cmd_contact(args) -> None:
         from abenlux.developer.contacts import ContactStore
         from abenlux.privacy.pseudonymize import pseudonymize
         pseudo = pseudonymize(SETTINGS.actor or current_actor(), SETTINGS.hmac_bytes)
-        cs = ContactStore(os.getenv("ABEN_CONTACT_DB", "abenlux-contacts.db"))
+        cs = ContactStore(os.getenv("ABEN_CONTACT_DB"))   # private ~/.abenlux by default
         card = cs.set(pseudo, fields) if setting else (cs.get(pseudo) or {})
         cs.close()
     if card:

@@ -16,6 +16,7 @@ authenticates with a bearer token and renders the role-appropriate view.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -71,13 +72,21 @@ def _tenants():
     return open_tenant_store(os.getenv("ABEN_TENANT_DB", "abenlux-tenants.db"))
 
 
+# a surfaced collaboration match is only "live" for this long. a months-old live-duplication pairing
+# must not be presented as someone working on it right now (the consent-ownership lookups still see all
+# rows - this only bounds what is shown as a current match).
+_MATCH_TTL_S = float(os.getenv("ABEN_MATCH_TTL_DAYS", "14")) * 86400
+
+
 def _peer_card(peer_pseudonym: str, contacts) -> dict:
     # the peer's shareable card: their self-set handles override the static principal fallback.
     # only ever called for a mutually-consented match.
-    card = _principals.pseudonym_to_contact(peer_pseudonym) or {"name": "a colleague"}
-    overlay = contacts.get(peer_pseudonym)
-    if overlay:
-        card = {**card, **overlay}
+    verified = _principals.pseudonym_to_contact(peer_pseudonym) or {"name": "a colleague"}
+    overlay = contacts.get(peer_pseudonym) or {}
+    card = {**verified, **overlay}
+    # the verified IdP display name is authoritative - a self-set card can never override the name shown
+    # in the trusted "identity revealed" surface (it carries only handles, but re-assert as defense).
+    card["name"] = verified.get("name", "a colleague")
     return card
 
 
@@ -242,18 +251,20 @@ async def me(principal: Principal = Depends(current_principal)):
     store.close()
     mstore = _matches()
     contacts = _contacts()
-    raw_matches = mstore.for_owner(principal.pseudonym)
+    raw_matches = mstore.for_owner(principal.pseudonym, max_age_s=_MATCH_TTL_S)  # drop stale pairings
     matches = []
     for m in raw_matches:
         revealed, card = None, None
-        if mstore.mutually_consented(principal.pseudonym, m["peer"]):
-            # identity AND contact handles revealed only after BOTH opted in
+        # consent is scoped to THIS topic: an intro granted on one shared problem never auto-reveals
+        # identity on a different, later match between the same two developers.
+        if mstore.mutually_consented(principal.pseudonym, m["peer"], m["topic"]):
+            # identity AND contact handles revealed only after BOTH opted in, on this topic
             card = _peer_card(m["peer"], contacts)
             revealed = card.get("name")
         matches.append({
             "id": m["id"], "topic": m["topic"], "similarity": m["similarity"],
             "mode": m["mode"], "peer_revealed": revealed, "peer_contact": card,
-            "you_requested": mstore.has_consented(principal.pseudonym, m["peer"]),
+            "you_requested": mstore.has_consented(principal.pseudonym, m["peer"], m["topic"]),
         })
     mstore.close()
     contacts.close()
@@ -269,9 +280,9 @@ async def collab_consent(match_id: int, principal: Principal = Depends(current_p
     if match_id not in owned:
         mstore.close()
         raise HTTPException(status_code=404, detail="match not found for this principal")
-    peer = owned[match_id]["peer"]
-    mstore.record_consent(principal.pseudonym, peer)
-    mutual = mstore.mutually_consented(principal.pseudonym, peer)
+    peer, topic = owned[match_id]["peer"], owned[match_id]["topic"]
+    mstore.record_consent(principal.pseudonym, peer, topic)        # consent is per-topic
+    mutual = mstore.mutually_consented(principal.pseudonym, peer, topic)
     card = None
     if mutual:
         contacts = _contacts()
@@ -403,8 +414,8 @@ async def collab_status_for_edge(principal: Principal = Depends(current_principa
     _need(principal, Permission.VIEW_OWN)
     mstore = _matches()
     out = [{"id": m["id"], "topic": m["topic"], "similarity": m["similarity"], "mode": m["mode"],
-            "mutual": mstore.mutually_consented(principal.pseudonym, m["peer"])}
-           for m in mstore.for_owner(principal.pseudonym)]
+            "mutual": mstore.mutually_consented(principal.pseudonym, m["peer"], m["topic"])}
+           for m in mstore.for_owner(principal.pseudonym, max_age_s=_MATCH_TTL_S)]
     mstore.close()
     return {"matches": out}
 

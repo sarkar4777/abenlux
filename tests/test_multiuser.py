@@ -137,7 +137,7 @@ def test_collaboration_surfaced_per_owner_via_match_store(tmp_path):
     assert len(ms.for_owner("px_bob")) == 1
     assert len(ms.for_owner("px_alice")) == 1
     assert ms.for_owner("px_alice")[0]["peer"] == "px_bob"
-    assert ms.mutually_consented("px_alice", "px_bob") is False
+    assert ms.mutually_consented("px_alice", "px_bob", ms.for_owner("px_alice")[0]["topic"]) is False
 
 
 # --------------------------------------------------------------------------- #

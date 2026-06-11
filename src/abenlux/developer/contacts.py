@@ -13,7 +13,11 @@ import json
 import sqlite3
 from pathlib import Path
 
-FIELDS = ("name", "email", "slack", "teams", "github", "note")
+from abenlux.developer.storage import private_db_path, secure_file
+
+# self-set handle fields only. 'name' is deliberately NOT here: the revealed identity is the
+# IdP-verified display name, not a self-chosen string, so a peer can't present an attacker-picked name.
+FIELDS = ("email", "slack", "teams", "github", "note")
 
 _SCHEMA = "CREATE TABLE IF NOT EXISTS contacts (pseudonym TEXT PRIMARY KEY, card TEXT)"
 
@@ -24,10 +28,14 @@ def clean_card(data: dict) -> dict:
 
 
 class ContactStore:
-    def __init__(self, path: str | Path = "abenlux-contacts.db"):
+    def __init__(self, path: str | Path | None = None):
+        path = str(path) if path is not None else private_db_path("contacts.db")
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute(_SCHEMA)
         self.conn.commit()
+        secure_file(path)
 
     def set(self, pseudonym: str, card: dict) -> dict:
         card = clean_card(card)

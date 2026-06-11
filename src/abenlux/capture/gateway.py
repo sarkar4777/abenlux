@@ -73,8 +73,12 @@ _kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path, embed_fn=_embed) if SETTINGS.kg
 _history = SessionHistoryTracker()
 _feed = LocalSignalFeed()        # developer-private, on-device, never crosses to analytics
 _broker = CollaborationBroker()  # double-blind, in deployment this is a privacy-preserving service
-_matchstore = MatchStore(os.getenv("ABEN_MATCH_DB", "abenlux-matches.db"))  # per-owner, RBAC-private
+_matchstore = MatchStore(os.getenv("ABEN_MATCH_DB"))  # per-owner; defaults to the dev's private ~/.abenlux
 _MAX_MONITORS = 4096
+# cap how much of an upstream response we buffer for capture. normal LLM responses are KB to low MB;
+# this only guards against a pathologically large body (e.g. a non-LLM payload mistakenly proxied)
+# ballooning gateway memory. passthrough to the tool is never capped. override via ABEN_MAX_CAPTURE_MB.
+_MAX_CAPTURE_BYTES = int(float(os.getenv("ABEN_MAX_CAPTURE_MB", "16")) * 1024 * 1024)
 _monitors: "OrderedDict[str, SessionWasteMonitor]" = OrderedDict()
 
 _NOTIFY = os.getenv("ABEN_NOTIFY", "1") != "0"  # desktop toasts, on by default, set 0 for headless
@@ -299,18 +303,36 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         url = f"{url}?{request.url.query}"
     started = time.perf_counter()
 
-    client = httpx.AsyncClient(timeout=None)
+    # read timeout stays unbounded - a legitimate long agentic stream has minute-long gaps between SSE
+    # chunks - but connect/write/pool are bounded so a dead or black-holed upstream is reaped instead of
+    # hanging the developer's tool call forever (the gateway must never be worse than calling direct).
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=15.0, write=30.0, pool=15.0))
     upstream_req = client.build_request(request.method, url, content=body, headers=fwd)
-    upstream = await client.send(upstream_req, stream=True)
+    try:
+        upstream = await client.send(upstream_req, stream=True)
+    except httpx.HTTPError as e:
+        # a connect/transport failure must surface as a provider-shaped error so the tool's own retry
+        # logic engages - never an opaque 500 - and the client must be closed so the pool doesn't leak.
+        await client.aclose()
+        _log_capture_error(f"upstream unreachable: {type(e).__name__}")
+        code = 504 if isinstance(e, httpx.TimeoutException) else 502
+        return JSONResponse(status_code=code, content={
+            "error": {"type": "upstream_unreachable", "message": "abenlux gateway could not reach the model upstream"}})
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
     captured = bytearray()
+    truncated = {"hit": False}
 
     async def tee():
         # close the upstream response + client even if the downstream tool disconnects mid-stream
-        # (the generator is then cancelled), otherwise the connection and AsyncClient leak.
+        # (the generator is then cancelled), otherwise the connection and AsyncClient leak. the captured
+        # buffer is capped so a pathologically large body can't balloon gateway memory - passthrough
+        # (yield) is never throttled, so the developer's stream is unaffected.
         try:
             async for chunk in upstream.aiter_raw():
-                captured.extend(chunk)
+                if len(captured) < _MAX_CAPTURE_BYTES:
+                    captured.extend(chunk)
+                    if len(captured) >= _MAX_CAPTURE_BYTES:
+                        truncated["hit"] = True
                 yield chunk
         finally:
             await upstream.aclose()

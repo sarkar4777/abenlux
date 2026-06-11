@@ -65,7 +65,8 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     # gated on the SAME k-threshold (None below k) so a sub-k tenant/org never exposes an exact total
     # that the DP twin is careful to suppress - otherwise the raw figure defeats its own privacy gate.
     org_clears_k = gate.allows(org_actors)
-    noisy_cost = gate.noisy_count(totals["cost"], org_actors)
+    # keyed so the DP'd total is STABLE across repeated /api/report calls (no averaging to recover it).
+    noisy_cost = gate.noisy_count(totals["cost"], org_actors, key=f"report-total:{tenant or 'all'}")
     orphan_share = store.orphan_token_share(tenant=tenant)
 
     # recoverable resent-history, cache-AWARE. resent history that is already a cache hit is cheap

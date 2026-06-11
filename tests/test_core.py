@@ -119,3 +119,16 @@ def test_unmapped_work_is_orphan():
 def test_extract_ticket():
     assert extract_ticket("feature/ACME-1234-foo") == "ACME-1234"
     assert extract_ticket("main") is None
+
+
+def test_dp_noise_is_deterministic_per_key_so_it_cannot_be_averaged_away():
+    from abenlux.privacy.pseudonymize import KAnonymityGate
+    g = KAnonymityGate(k=3, dp_epsilon=1.0)
+    # repeated queries for the SAME aggregate must return the SAME noised value, else an attacker
+    # averages many calls to cancel the Laplace noise and recover the true figure.
+    vals = {g.noisy_count(100.0, 5, key="report-total:acme-eu") for _ in range(50)}
+    assert len(vals) == 1 and vals != {100.0}            # one stable noised value, and it IS noised
+    other = g.noisy_count(100.0, 5, key="report-total:acme-us")
+    assert other != next(iter(vals))                     # a different aggregate gets independent noise
+    # unkeyed noise stays random (legacy behavior) - two draws almost surely differ
+    assert g.laplace_noise() != g.laplace_noise()

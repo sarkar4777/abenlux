@@ -166,7 +166,7 @@ def benchmark(
     # the focus tenant gets its OWN (noised) ratio vector back - but ONLY when it clears k-anonymity.
     # a principal may focus on any tenant in their org, so a sub-k sibling tenant's ratios are really
     # one individual's unit economics; gating on qualifies keeps that behind the same wall as the cohort.
-    focus_ratios = _noise_ratios(focus.ratios, gate) if (focus and focus.qualifies) else {}
+    focus_ratios = _noise_ratios(focus.ratios, gate, key_prefix=focus_tenant) if (focus and focus.qualifies) else {}
 
     comparison = []
     if ready:
@@ -174,8 +174,9 @@ def benchmark(
             # one entry per qualifying tenant that HAS this metric (cost metrics drop unpriced tenants).
             raw = {v.tenant_id: v.ratios[key] for v in qualifying if v.ratios.get(key) is not None}
             # DISPLAY figures (you/min/median/max) are DP-noised, derived from one sorted series so the
-            # row is internally consistent (you within [min,max], min<=median<=max).
-            noised = {tid: _noise(val, gate) for tid, val in raw.items()}
+            # row is internally consistent (you within [min,max], min<=median<=max). the noise is keyed
+            # per (tenant, metric) so repeated benchmark queries return the SAME value (no averaging).
+            noised = {tid: _noise(val, gate, key=f"{tid}:{key}") for tid, val in raw.items()}
             series = sorted(noised.values())
             you = noised.get(focus_tenant)              # None if focus lacks this metric (unpriced)
             n = len(series)
@@ -217,10 +218,12 @@ def _readiness_reason(focus, qualifying, k_tenants: int, k: int) -> str:
     return "cohort ready"
 
 
-def _noise(value: float, gate: KAnonymityGate) -> float:
+def _noise(value: float, gate: KAnonymityGate, key: str | None = None) -> float:
     # ratios live in [0,~]. clamp negatives to 0 so noise can't print a nonsensical sub-zero rate.
-    return max(0.0, value + gate.laplace_noise(sensitivity=_DP_SENSITIVITY))
+    return max(0.0, value + gate.laplace_noise(sensitivity=_DP_SENSITIVITY, key=key))
 
 
-def _noise_ratios(ratios: dict, gate: KAnonymityGate) -> dict:
-    return {k: (round(_noise(v, gate), 6) if v is not None else None) for k, v in ratios.items()}
+def _noise_ratios(ratios: dict, gate: KAnonymityGate, key_prefix: str = "") -> dict:
+    # deterministic per (tenant, metric) so the focus tenant's own noised ratios are stable across calls.
+    return {k: (round(_noise(v, gate, key=f"{key_prefix}:{k}"), 6) if v is not None else None)
+            for k, v in ratios.items()}

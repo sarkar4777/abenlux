@@ -32,3 +32,19 @@ def test_decode_body_gunzips_a_compressed_response():
     assert _decode_body(gz, "gzip") == payload            # real providers gzip behind a CDN
     assert _decode_body(payload, "") == payload           # identity passes through unchanged
     assert _decode_body(gz, "br") == gz                   # unavailable codec -> raw bytes (fail loud later)
+
+
+def test_exact_cache_key_includes_route_and_actor():
+    # the upstream model/deployment/api-version lives in the URL, so an identical body to a different
+    # model must NOT collide. the key is also scoped per actor and tenant.
+    from abenlux.capture.gateway import _exact_key
+    from abenlux.schema import Provider
+    body = b'{"contents":[{"parts":[{"text":"hi"}]}]}'
+    flash = _exact_key(Provider.GOOGLE, body, "dev0", "acme", "/v1beta/models/gemini-2.5-flash:generateContent")
+    pro = _exact_key(Provider.GOOGLE, body, "dev0", "acme", "/v1beta/models/gemini-2.5-pro:generateContent")
+    assert flash != pro                                  # different model -> different cache entry
+    assert flash == _exact_key(Provider.GOOGLE, body, "dev0", "acme",
+                               "/v1beta/models/gemini-2.5-flash:generateContent")   # same route -> same key
+    other_actor = _exact_key(Provider.GOOGLE, body, "dev1", "acme",
+                             "/v1beta/models/gemini-2.5-flash:generateContent")
+    assert flash != other_actor                          # never serve one actor another's response

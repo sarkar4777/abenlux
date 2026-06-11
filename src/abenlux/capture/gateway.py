@@ -92,14 +92,17 @@ _EXACT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 _EXACT_MAX = 512
 
 
-def _exact_key(provider: Provider, body: bytes, actor: str, tenant: str) -> str:
+def _exact_key(provider: Provider, body: bytes, actor: str, tenant: str, route: str) -> str:
     # scoped to the actor (and tenant) so a hit only ever serves a developer their OWN identical
     # repeat. never one person's response to another - that would bleed content across actors and
     # mis-attribute the avoided cost. in production each developer runs their own edge agent, so this
     # is naturally per-person; the scope just makes a shared-gateway deployment correct too.
+    # the route (path + query) is part of the key: the upstream model/deployment/api-version lives in
+    # the URL for Gemini and Azure, so two requests with an identical BODY but a different model must
+    # NOT collide and serve each other's response.
     h = hashlib.blake2b(body, digest_size=16)
     h.update(b"\x00")
-    h.update(f"{tenant}\x00{actor}".encode())
+    h.update(f"{tenant}\x00{actor}\x00{route}".encode())
     return f"{provider.value}:{h.hexdigest()}"
 
 
@@ -436,7 +439,8 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
 
     # --- exact-match cache: a byte-identical NON-STREAMED repeat is served locally, upstream call avoided
     _actor = overrides.get("actor") or current_actor() or "local"
-    cache_key = (_exact_key(provider, body, _actor, getattr(SETTINGS, "tenant_id", "default"))
+    _route = f"{path}?{request.url.query}" if request.url.query else path
+    cache_key = (_exact_key(provider, body, _actor, getattr(SETTINGS, "tenant_id", "default"), _route)
                  if getattr(SETTINGS, "exact_cache", False) and not streamed else None)
     if cache_key is not None:
         hit = _exact_get(cache_key)

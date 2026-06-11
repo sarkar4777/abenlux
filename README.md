@@ -335,7 +335,8 @@ abenlux cost <model>                       price an interaction
 abenlux report [--tenant <id>]             management spend→value report (k-anonymity gated)
 abenlux tenant create <id> --org <org>     create an org unit / geography (tenant); `tenant list`
 abenlux benchmark [--tenant <id>]          compare your tenant vs the org cohort (k-anon, DP)
-abenlux me / watch                         your own private spend + nudges (summary / live tail)
+abenlux me [--today] / watch               your own private spend (--today: burn-rate) / live tail
+abenlux calls [--top-cost] [--today]       your own recent calls, per-call (private to you)
 abenlux graph [--json]                     your developer-local knowledge graph
 abenlux collab [intro <id>]                see / act on double-blind collaboration matches
 abenlux contact [set --slack ...]          your shareable contact card (revealed only on mutual intro)

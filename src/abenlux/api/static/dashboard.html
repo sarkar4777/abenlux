@@ -105,6 +105,8 @@
       <div class="card" id="byTool"></div>
       <h2>Model mix</h2>
       <div class="card" id="byModel"></div>
+      <h2>Provider mix <span class="hint">spend per provider, to reconcile against the vendor invoice</span></h2>
+      <div class="card" id="byProvider"></div>
       <div class="note" id="privacyNote"></div>
     </div>
 
@@ -298,6 +300,7 @@ async function loadManagement(){
   $("#byObjective").innerHTML = bars(rep.by_objective, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
   $("#byTool").innerHTML = bars(rep.by_tool, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
   $("#byModel").innerHTML = bars(rep.by_model, r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
+  $("#byProvider").innerHTML = bars(rep.by_provider||[], r=>r.cost, fmtUSD) || '<div class="muted">no data yet</div>';
   $("#privacyNote").textContent =
     `Privacy: groups with fewer than k=${rep.privacy.k} developers are suppressed; cross-team totals carry differential-privacy noise. No individual rows exist on this plane.`;
 }

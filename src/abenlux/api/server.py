@@ -389,6 +389,40 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     return rep
 
 
+@app.get("/api/export")
+async def export(dimension: str = "objective", format: str = "csv", tenant: str | None = None,
+                 principal: Principal = Depends(current_principal)):
+    # finance export: content-free aggregate spend rows for the FinOps/chargeback system. gated on
+    # VIEW_COST (the permission that previously had no endpoint), scoped to the caller's org, and
+    # k-anonymized - only groups that clear k are exported, never an individual-revealing sub-k row.
+    _need(principal, Permission.VIEW_COST)
+    scope = _resolve_report_tenant(principal, tenant)
+    store = _store()
+    try:
+        rows = store.rollup(dimension, tenant=scope)
+    except ValueError as e:
+        store.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    store.close()
+    from abenlux.privacy.pseudonymize import KAnonymityGate
+    gate = KAnonymityGate(k=SETTINGS.k_anon)
+    out = [{"dimension": dimension, "label": r["label"], "calls": r["calls"], "tokens": r["tokens"],
+            "cost_usd": round(r["cost"], 4), "actors": r["actors"]}
+           for r in rows if gate.allows(r["actors"])]
+    if format == "json":
+        return {"dimension": dimension, "tenant": scope, "k": SETTINGS.k_anon, "rows": out}
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["dimension", "label", "calls", "tokens", "cost_usd", "actors"])
+    for r in out:
+        w.writerow([r["dimension"], r["label"], r["calls"], r["tokens"], r["cost_usd"], r["actors"]])
+    from fastapi.responses import Response
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=abenlux-{dimension}-{scope}.csv"})
+
+
 @app.get("/api/savings")
 async def savings(tenant: str | None = None, principal: Principal = Depends(current_principal)):
     # the reuse-yield ledger: estimated cost of re-solves avoided, k-anonymity gated, scoped to the

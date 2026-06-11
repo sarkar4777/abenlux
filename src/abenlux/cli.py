@@ -293,12 +293,33 @@ def cmd_report(args) -> None:
                   f"{b['pct']*100:4.0f}%  forecast ${b['forecast_usd']:>9,.2f}  [{flag}]")
 
 
+def _local_midnight_ts() -> float:
+    import time as _t
+    lt = _t.localtime()
+    return _t.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+
+
 def cmd_me(args) -> None:
+    import time as _t
+
     from abenlux.developer.feed import LocalSignalFeed
     actor = SETTINGS.actor or current_actor()
     pseudo = pseudonymize(actor, SETTINGS.hmac_bytes)
     store = open_store(SETTINGS.db_path)
     rep = developer_report(store, pseudo)
+    # a 'today' burn-rate: spend since local midnight + a run-rate projection to end of day, so a
+    # developer can course-correct against a daily pace, not just see an all-time total. private, local.
+    if getattr(args, "today", False):
+        midnight = _local_midnight_ts()
+        s = store.actor_summary(pseudo, start_ts=midnight)
+        elapsed = max((_t.time() - midnight) / 86400.0, 0.04)   # fraction of the day, floored like budgets
+        pace = s["cost"] / elapsed
+        print(f"== today ({actor}) ==")
+        print(f" today: calls:{s['calls']}  tokens:{s['tokens']:,}  spent:${s['cost']:,.4f}")
+        print(f" at this pace ~${pace:,.4f} by end of day  (retry loops today: {s['retries']})")
+        print(" (private to you, never visible to management)")
+        store.close()
+        return
     store.close()
     print(f"== your private view ({actor}) ==")
     print(f" calls:{rep['calls']}  tokens:{rep['tokens']:,}  cost:${rep['cost_usd']:,.4f}")
@@ -315,6 +336,33 @@ def cmd_me(args) -> None:
         usd = e.get("recoverable_usd", 0.0)
         extra = f"  ~${usd:.4f}" if usd else ""
         print(f"   [{e['kind']:<16}] ({tag}) {e['line']}{extra}")
+
+
+def cmd_calls(args) -> None:
+    # per-call drill-down of YOUR OWN recent calls, private to you (scoped to your pseudonym). lets a
+    # developer who sees a spend spike ask "what were my last N calls, by cost?" - all on-device.
+    actor = SETTINGS.actor or current_actor()
+    pseudo = pseudonymize(actor, SETTINGS.hmac_bytes)
+    since = _local_midnight_ts() if getattr(args, "today", False) else None
+    order = "cost" if getattr(args, "top_cost", False) else "ts"
+    store = open_store(SETTINGS.db_path)
+    rows = store.recent_records(pseudo, args.n, since_ts=since, objective=args.objective, order=order)
+    store.close()
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        print("no calls found for this view.")
+        return
+    print(f"== your recent calls ({actor}) {'ordered by cost' if order == 'cost' else 'most recent first'} ==")
+    print(f" {'model':<22}{'in':>7}{'out':>7}{'cache':>8}{'cost':>11}  what")
+    for r in rows:
+        flag = " retry" if r.get("is_retry_loop") else ""
+        priced = "" if r.get("cost_priced", 1) else " (unpriced)"
+        what = f"{r['objective']} / {r['work_type']}" + (f" [{r['ticket_id']}]" if r.get("ticket_id") else "")
+        print(f" {str(r['request_model'])[:22]:<22}{r['input_tokens']:>7}{r['output_tokens']:>7}"
+              f"{r['cache_read_tokens']:>8}{('$' + format(r['cost_usd'], '.4f')):>11}{priced}  {what}{flag}")
+    print(" (private to you, never visible to management)")
 
 
 def _fmt_contact(card) -> str:
@@ -571,7 +619,8 @@ def _bench_metrics():
 _OVERVIEW = """abenlux - AI spend -> value attribution plane
 
 YOUR STUFF (private to you, never seen by management)
-  abenlux me                 your spend + recent waste/collaboration nudges
+  abenlux me [--today]       your spend + recent nudges (--today: burn-rate to end of day)
+  abenlux calls [--top-cost] your own recent calls, per-call (private to you)
   abenlux watch              live tail of your private signals (keep in a spare pane)
   abenlux graph              your on-device knowledge graph (objectives, tickets, purpose)
   abenlux collab             see collaboration matches; `collab intro <id>` to request an intro
@@ -672,7 +721,16 @@ def main() -> None:
 
     m = sub.add_parser("me", help="your own private spend + recent nudges")
     m.add_argument("-n", type=int, default=20, help="how many recent nudges to show")
+    m.add_argument("--today", action="store_true", help="spend since midnight + run-rate to end of day")
     m.set_defaults(func=cmd_me)
+
+    cl2 = sub.add_parser("calls", help="your own recent calls, per-call (private to you)")
+    cl2.add_argument("-n", type=int, default=20, help="how many calls to show")
+    cl2.add_argument("--today", action="store_true", help="only calls since local midnight")
+    cl2.add_argument("--top-cost", action="store_true", dest="top_cost", help="order by most expensive")
+    cl2.add_argument("--objective", help="filter to one objective label")
+    cl2.add_argument("--json", action="store_true")
+    cl2.set_defaults(func=cmd_calls)
 
     w = sub.add_parser("watch", help="live tail of your private signals")
     w.add_argument("--all", action="store_true", help="print existing history before tailing")

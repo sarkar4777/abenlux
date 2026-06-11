@@ -306,15 +306,45 @@ class _BaseStore:
             (actor_pseudonym,),
         ))
 
-    def actor_summary(self, actor_pseudonym: str) -> dict:
-        """one developer's OWN view. private to them, never a management surface."""
+    def actor_summary(self, actor_pseudonym: str, *, start_ts: float | None = None,
+                      end_ts: float | None = None) -> dict:
+        """one developer's OWN view. private to them, never a management surface. an optional time window
+        powers a 'today' / since-midnight view and a burn-rate projection."""
+        clause, params = "", (actor_pseudonym,)
+        if start_ts is not None:
+            clause += " AND ts >= ?"
+            params += (start_ts,)
+        if end_ts is not None:
+            clause += " AND ts < ?"
+            params += (end_ts,)
         return self._row(self._exec(
             "SELECT COUNT(*) calls, COALESCE(SUM(input_tokens+output_tokens),0) tokens, "
             "COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(duplicate_history_tokens),0) dup_tokens, "
             "COALESCE(SUM(cache_read_tokens),0) cache_read, COALESCE(SUM(input_tokens),0) input_tokens, "
             "COALESCE(SUM(CASE WHEN is_retry_loop=1 THEN 1 ELSE 0 END),0) retries "
-            "FROM derived WHERE actor_pseudonym=?",
-            (actor_pseudonym,),
+            "FROM derived WHERE actor_pseudonym=?" + clause,
+            params,
+        ))
+
+    def recent_records(self, actor_pseudonym: str, n: int = 20, *, since_ts: float | None = None,
+                       objective: str | None = None, order: str = "ts") -> list[dict]:
+        """one developer's OWN recent calls (per-call drill-down). private to them - scoped to their
+        pseudonym, never a management surface. order by 'ts' (recent first) or 'cost' (most expensive)."""
+        clause, params = "", (actor_pseudonym,)
+        if since_ts is not None:
+            clause += " AND ts >= ?"
+            params += (since_ts,)
+        if objective is not None:
+            clause += " AND objective_label = ?"
+            params += (objective,)
+        order_col = "cost_usd" if order == "cost" else "ts"
+        return self._rows(self._exec(
+            "SELECT ts, tool, request_model, input_tokens, output_tokens, cache_read_tokens, "
+            "cost_usd, cost_priced, COALESCE(objective_label,'(unattributed)') AS objective, "
+            "COALESCE(work_type,'?') AS work_type, ticket_id, is_retry_loop "
+            "FROM derived WHERE actor_pseudonym=?" + clause +
+            f" ORDER BY {order_col} DESC LIMIT ?",
+            params + (n,),
         ))
 
     def claim_null_tenant(self, tenant: str) -> int:

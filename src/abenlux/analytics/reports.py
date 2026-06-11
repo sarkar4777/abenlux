@@ -59,6 +59,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     by_objective = _gate_rows(store.rollup("objective", tenant=tenant), gate)
     by_tool = _gate_rows(store.rollup("tool", tenant=tenant), gate)
     by_model = _gate_rows(store.rollup("model", tenant=tenant), gate)
+    by_provider = _gate_rows(store.rollup("provider", tenant=tenant), gate)  # for invoice reconciliation
 
     # org-wide scalars: noise them, and only release when the whole org clears k. the RAW scalars are
     # gated on the SAME k-threshold (None below k) so a sub-k tenant/org never exposes an exact total
@@ -151,6 +152,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         "by_objective": [r.__dict__ for r in by_objective],
         "by_tool": [r.__dict__ for r in by_tool],
         "by_model": [r.__dict__ for r in by_model],
+        "by_provider": [r.__dict__ for r in by_provider],  # spend per provider, to reconcile to invoices
         "privacy": {"k": k, "dp_epsilon": dp_epsilon, "note": "groups below k are suppressed"},
     }
 

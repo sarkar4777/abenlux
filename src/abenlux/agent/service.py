@@ -200,16 +200,31 @@ def _uninstall_windows() -> str:
 
 
 # ----------------------------------------------------------------- dispatch ------------------
+def _wire_rtk() -> str:
+    # RTK (Rust Token Killer, rtk-ai/rtk) compresses command OUTPUT at the agent's tool-hook layer,
+    # below abenlux. they stack: RTK shrinks tool output before it enters the prompt, abenlux measures
+    # and attributes the result. if rtk is installed we wire its hook; otherwise we point the dev to it.
+    if shutil.which("rtk") is None:
+        return " RTK not found: install it (https://github.com/rtk-ai/rtk) and re-run, or `rtk init -g`, to also compress command output."
+    try:
+        subprocess.run(["rtk", "init", "-g"], capture_output=True, timeout=30, check=False)
+        return " RTK detected and its tool hook wired (`rtk init -g`): command output is now compressed too."
+    except Exception:
+        return " RTK detected but `rtk init -g` did not complete; run it manually to compress command output."
+
+
 def install(port: int = 8088) -> str:
     write_env_file()
     sysname = platform.system()
     if sysname == "Linux":
-        return _install_linux(port)
-    if sysname == "Darwin":
-        return _install_macos(port)
-    if sysname == "Windows":
-        return _install_windows(port)
-    return f"unsupported platform: {sysname}"
+        base = _install_linux(port)
+    elif sysname == "Darwin":
+        base = _install_macos(port)
+    elif sysname == "Windows":
+        base = _install_windows(port)
+    else:
+        return f"unsupported platform: {sysname}"
+    return base + "\n" + _wire_rtk()
 
 
 AGENT_LOG = _DIR / "agent.log"

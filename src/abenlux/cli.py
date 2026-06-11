@@ -253,6 +253,10 @@ def cmd_report(args) -> None:
     if ry.get("reuse_avoided_usd"):
         print(f" reuse-yield (avoided re-solves) : ~${ry['reuse_avoided_usd']:,.2f}  "
               f"({ry['events_credited']} reuses, k-gated - a SAVING, shown beside spend)")
+    cz = rep.get("compression") or {}
+    if cz.get("saved_input_tokens") or cz.get("cache_hits"):
+        print(f" compression yield : {cz.get('saved_input_tokens', 0):,} tokens saved (~${cz.get('saved_usd', 0):,.2f})  "
+              f"{cz.get('cache_hits', 0)} calls served from cache  (edge compression layer)")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
     trend = rep.get("trend")

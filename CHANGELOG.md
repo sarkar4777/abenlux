@@ -3,6 +3,35 @@
 All notable changes to this project are documented here. This project adheres to semantic
 versioning.
 
+## [0.4.0] - 2026-06
+
+The edge compression layer. A pluggable set of token savers that run on the outbound request at the
+gateway, so every tool gets them with no per-tool setup, IDE or CLI, any provider. Safe-and-lossless
+strategies run automatically; content-rewriting ones are one flag. Built to interoperate with and
+credit the open tools that pioneered each lever (RTK, DocLang/Docling, Headroom, Bifrost Code Mode).
+
+### Added
+- Compression layer (compress/__init__.py). A registry of provider-aware Strategy objects that
+  rewrite the outbound request body before it is forwarded. Two DX invariants: a strategy that errors
+  is skipped so compression can never break a call, and only lossless non-content-rewriting strategies
+  run by default.
+- Prefix-Break Localizer (prefix_stabilize, auto-on). Moves an injected date/request-id out of the
+  cache-stable prefix of the system prompt so the provider prompt cache hits. Lossless, just reordered.
+- Opt-in content strategies via ABEN_COMPRESS (csv or all): command_trim (RTK-style command-output
+  trimming: strip ANSI, collapse repeats, truncate), otsl_tables (HTML tables to compact OTSL),
+  compress_json (minify embedded JSON), slim_tools (dedupe resent tool/function definitions).
+- Exact-match request cache (ABEN_EXACT_CACHE, on). A byte-identical non-streamed repeat within a TTL
+  is served from a bounded on-device LRU with no upstream call. The cached response stays on the
+  device and is never forwarded; the served record is content-free and costs nothing.
+- Compression-yield surfacing. DerivedRecord carries content-free saved_input_tokens, compression, and
+  served_from_cache. The management report, CLI report, and dashboard show realized savings (tokens
+  removed, calls served from cache) beside spend, never inside it.
+- agent install wires RTK's tool-hook (rtk init -g) when RTK is present; RTK runs below abenlux so the
+  two stack.
+
+### Changed
+- Collector _harden_inbound honors served_from_cache and does not re-price a free local-cache hit.
+
 ## [0.3.0] - 2026-06
 
 Multi-tenancy, two new analytics features, a real-model test harness, and a large round of

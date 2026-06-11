@@ -192,6 +192,31 @@ registered tenants; only the unconfigured `default` org falls back to `distinct_
 then admits a raw id only if the registry shows it unregistered or owned by the same org, so a named
 org's tenants never leak into the default cohort.
 
+## The compression layer
+
+Because the gateway is a loopback proxy that the tool already points its `base_url` at, it is the one
+place that can shrink the **outbound request** for *every* tool at once. `compress/__init__.py` is a
+registry of `Strategy` objects, each operating on the parsed request body (provider-aware over the
+Anthropic / OpenAI / Gemini shapes) and returning a possibly-new body plus the input tokens it removed.
+`_proxy` runs the enabled strategies before `client.send`, swaps the body, and records content-free
+`saved_input_tokens` + the applied strategy names on the `DerivedRecord`. Two invariants protect the
+developer: (1) a strategy that raises is skipped (`compress_request` isolates each one), so compression
+can **never break a call**; (2) only strategies that are lossless AND do not rewrite prompt **content**
+run by default - today that is `prefix_stabilize`, the automatic **Prefix-Break Localizer**, which only
+*reorders* an injected date/id out of the cache-stable prefix so prompt caching hits. Content-rewriting
+strategies (`command_trim` RTK-style, `otsl_tables` DocLang-style, `compress_json` Headroom-style,
+`slim_tools` Bifrost-style) are opt-in via `ABEN_COMPRESS`, applied to every tool with one flag.
+
+An **exact-match request cache** sits beside it: a byte-identical non-streamed repeat within a TTL is
+served from a bounded on-device LRU with no upstream call. The cached response is content and stays on
+the device, never forwarded; the served record is stamped `served_from_cache`, costs nothing, and the
+collector honors that flag in `_harden_inbound` rather than re-pricing it. The realized savings surface
+as a compression-yield block in the management report, beside spend, never inside it.
+
+These are abenlux's own bounded implementations that interoperate with and credit the open tools that
+pioneered each lever (RTK, DocLang/Docling, Headroom, Bifrost Code Mode); RTK in particular runs *below*
+abenlux at the agent tool-hook layer, so the two stack and `agent install` wires RTK's hook when present.
+
 ## The background agent
 
 `abenlux agent install` runs the capture agent in the background, started at user login, in the
@@ -233,7 +258,7 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **263 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **275 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full

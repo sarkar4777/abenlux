@@ -189,7 +189,9 @@ class _BaseStore:
             "COALESCE(SUM(cache_creation_tokens),0) cache_creation, "
             "COALESCE(SUM(input_tokens),0) input_tokens, "
             "COALESCE(SUM(CASE WHEN is_retry_loop=1 THEN 1 ELSE 0 END),0) retries, "
-            "COALESCE(SUM(CASE WHEN cost_priced=0 THEN 1 ELSE 0 END),0) unpriced "
+            "COALESCE(SUM(CASE WHEN cost_priced=0 THEN 1 ELSE 0 END),0) unpriced, "
+            "COALESCE(SUM(saved_input_tokens),0) saved_input_tokens, "
+            "COALESCE(SUM(CASE WHEN served_from_cache=1 THEN 1 ELSE 0 END),0) cache_hits "
             "FROM derived" + self._and(pred), params
         ))
 

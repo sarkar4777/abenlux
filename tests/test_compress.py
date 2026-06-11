@@ -109,3 +109,33 @@ def test_default_strategies_are_lossless_and_non_content_rewriting():
     for s in strategies().values():
         if s.default_on:
             assert s.lossless and not s.rewrites_prompt
+
+
+def test_report_surfaces_compression_yield(tmp_path):
+    # saved tokens + cache hits flow content-free to the management report as a yield block
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "c.db")
+    for i in range(5):
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="claude-opus-4-8",
+                               input_tokens=1000, output_tokens=100, duplicate_history_tokens=0,
+                               cost_usd=2.0, objective_id="O", objective_label="O", is_orphan=False,
+                               saved_input_tokens=300, compression="prefix_stabilize",
+                               served_from_cache=(i == 0)))
+    rep = management_report(s, k=5)
+    cz = rep["compression"]
+    assert cz["saved_input_tokens"] == 1500 and cz["cache_hits"] == 1 and cz["saved_usd"] >= 0
+    s.close()
+
+
+def test_collector_does_not_reprice_a_cache_hit():
+    # a local-cache hit made no upstream call, so the collector must keep its cost at 0, not re-price it
+    from abenlux.api.server import _harden_inbound
+    from abenlux.schema import DerivedRecord
+    rec = DerivedRecord(event_id="c", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                        request_model="claude-opus-4-8", input_tokens=1000, output_tokens=100,
+                        duplicate_history_tokens=0, cost_usd=0.0, cost_priced=True, served_from_cache=True)
+    _harden_inbound(rec)
+    assert rec.cost_usd == 0.0 and rec.cost_priced   # not re-priced to a real cost

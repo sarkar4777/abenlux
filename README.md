@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-263%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-275%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -68,6 +68,7 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 |---|---|
 | 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
 | ♻️ **Cache-aware savings** | Separates fresh input from cache reads/writes per call, reports a **prompt-cache hit ratio**, and flags resent context that *isn't* being cached — the one token-saving lever with **zero loss of detail**, because the exact same context is sent, just billed as a cache hit. |
+| 🗜 **Compression layer** | A pluggable set of token savers that run on the **outbound request at the gateway**, so **every tool gets it** (IDE or CLI, any provider) with no setup. Safe lossless strategies run automatically (the **Prefix-Break Localizer** moves an injected date/id out of the cache-stable prefix so prompt caching hits); content-rewriting ones (RTK-style command-output trimming, DocLang/OTSL tables, Headroom-style JSON minify, Bifrost-style tool-def dedupe) are **one flag** (`ABEN_COMPRESS`). An **exact-match cache** serves a byte-identical repeat for free. A failing strategy is skipped, so it **never breaks a call**, and the realized savings show up beside spend. |
 | 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**, traced to the ticket. Long, code-heavy, multi-part prompts are reduced to their **salient intent** first, so a pasted stack trace doesn't get mislabelled a "fix". 98.6% accuracy on a 69-prompt corpus, 100% on the net-new/maintenance split. |
 | 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
 | 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
@@ -90,7 +91,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 263 tests
+make test             # 275 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -355,6 +356,44 @@ the edge agent redacts on the device and forwards only the content-free `Derived
 
 ---
 
+## Save tokens automatically (the compression layer)
+
+Because the edge agent is a loopback proxy, it can shrink the **outbound request** before it is
+forwarded. This runs for **every tool, IDE or CLI, any provider**, with no per-tool setup and no
+context switching. Two rules keep it safe for developers:
+
+- **Safe-and-lossless strategies run automatically.** Today that is the **Prefix-Break Localizer**: it
+  moves an injected `Today is <date>` / request-id out of the cache-stable prefix of your system
+  prompt so the provider's prompt cache actually hits. Same content, reordered, ~10x cheaper input.
+- **Strategies that rewrite prompt content are one flag.** `ABEN_COMPRESS=command_trim,otsl_tables,compress_json,slim_tools`
+  (or `all`) turns them on for every tool at once. A strategy that errors is skipped, so compression
+  **can never break your call**. `ABEN_COMPRESS=off` disables everything.
+
+| Strategy | What it does | Lossless | Default |
+|---|---|:--:|:--:|
+| `prefix_stabilize` | move an injected date/id out of the cache-stable prefix | ✅ | **on** |
+| `command_trim` | strip ANSI, collapse repeated lines, truncate huge command output | near | off |
+| `otsl_tables` | verbose HTML tables to compact OTSL | ✅ (cells) | off |
+| `compress_json` | minify embedded JSON blobs | ✅ | off |
+| `slim_tools` | drop duplicate tool/function definitions resent each turn | ✅ | off |
+| exact-match cache | serve a byte-identical non-streamed repeat for free (`ABEN_EXACT_CACHE`) | ✅ | **on** |
+
+The realized savings (tokens removed, calls served from cache) show up beside spend in `abenlux report`
+and the dashboard. These strategies are abenlux's own bounded implementations, built to **interoperate
+with and credit** the open tools that pioneered them:
+
+- **[RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)** (MIT) compresses command output at the
+  agent's tool-hook layer, *below* abenlux; the two stack, and `abenlux agent install` wires RTK's hook
+  when RTK is present.
+- **[DocLang / Docling](https://github.com/docling-project/docling)** (LF AI & Data) is the AI-native
+  document format; `otsl_tables` uses its compact OTSL table form.
+- **[Headroom](https://andrew.ooo/posts/headroom-context-compression-llm-agents-review/)** pioneered
+  JSON/AST context compressors; `compress_json` is a bounded version.
+- **Bifrost "Code Mode"** popularized tool-definition slimming for coding agents; `slim_tools` dedupes
+  identical definitions.
+
+---
+
 ## Capture is tiered by how each tool actually makes its call
 
 `abenlux tiers` prints the live matrix. We never present metadata-only data as full-content data.
@@ -432,7 +471,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-263 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+275 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
@@ -450,7 +489,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 263 tests
+make test       # 275 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

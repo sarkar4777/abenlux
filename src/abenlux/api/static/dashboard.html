@@ -94,6 +94,8 @@
       <div class="grid kpis" id="mgmtKpis"></div>
       <h2>Reuse-Yield Ledger <span class="hint">money NOT spent · re-solves the org avoided · k-anonymity gated · shown beside spend, never inside it</span></h2>
       <div class="card" id="reuseYield"></div>
+      <h2>Compression yield <span class="hint">tokens the edge compression layer removed + calls served from the local cache · realized savings, beside spend</span></h2>
+      <div class="card" id="compression"></div>
       <h2>Budgets <span class="hint">spend vs ceiling · run-rate forecast to period end</span></h2>
       <div class="card" id="budgets"></div>
       <h2>What the AI spend is for <span class="hint">net-new build vs keeping the lights on · purpose from branch or prompt</span></h2>
@@ -294,6 +296,14 @@ async function loadManagement(){
     kpi("Orphan spend", (rep.orphan_token_share*100).toFixed(1)+"%", "unattributed - the headline waste metric")+
     kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling");
   $("#reuseYield").innerHTML = reuseYieldView(ry);
+  const cz = rep.compression || {};
+  $("#compression").innerHTML = (cz.saved_input_tokens || cz.cache_hits)
+    ? `<div style="display:flex;gap:24px;align-items:baseline">
+         <div><div class="val" style="color:var(--good);font-size:26px">${fmtUSD(cz.saved_usd||0)}</div><div class="muted">saved by compression</div></div>
+         <div><div class="val" style="font-size:26px">${fmtN(cz.saved_input_tokens||0)}</div><div class="muted">input tokens removed</div></div>
+         <div><div class="val" style="font-size:26px">${fmtN(cz.cache_hits||0)}</div><div class="muted">calls served from cache</div></div>
+       </div>`
+    : '<div class="muted">no compression savings yet. the edge layer stabilizes the cache prefix automatically; enable more strategies with ABEN_COMPRESS.</div>';
   $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
   $("#investment").innerHTML = investmentView(rep.investment, rep.by_work_type||[]);
   $("#newInitiatives").innerHTML = newInitiativesView(rep.new_initiatives);

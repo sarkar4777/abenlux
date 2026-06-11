@@ -76,6 +76,15 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     # into the numerator while excluding cache tokens from the denominator overstates the band).
     billed_tokens = totals["tokens"] + totals.get("cache_read", 0) + totals.get("cache_creation", 0)
     blended = (totals["cost"] / billed_tokens) if billed_tokens else 0.0
+
+    # compression yield: tokens the edge compression layer removed from outbound requests + calls served
+    # whole from the local exact-match cache, valued at the blended rate. realized savings, beside spend.
+    saved_tokens = totals.get("saved_input_tokens", 0)
+    compression = {
+        "saved_input_tokens": saved_tokens,
+        "saved_usd": round(saved_tokens * blended, 2),
+        "cache_hits": totals.get("cache_hits", 0),
+    }
     dup = totals["dup_tokens"]
     uncached_dup = max(0, dup - totals.get("cache_read", 0))
     waste_floor = round(uncached_dup * blended * 0.1, 2)   # if made fully cacheable
@@ -146,6 +155,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         # the dollar value of spend on models not in the price table is otherwise invisible in the $0
         # placeholder cost. surface it as a count + a flag so the headline total is honestly incomplete.
         "unpriced_spend_present": totals["unpriced"] > 0,
+        "compression": compression,                  # tokens/$ saved by the edge compression layer + cache hits
         "cache_hit_ratio": cache_hit_ratio,
         "cache_read_tokens": cache_read,
         "recoverable_resent_history_usd": {"floor": waste_floor, "ceiling": waste_ceiling},

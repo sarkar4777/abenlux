@@ -1,2 +1,2 @@
 """Abenlux - AI spend -> value attribution plane."""
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -150,3 +150,29 @@ def test_residency_for_prefers_registry_over_edge_supplied(monkeypatch):
 def test_ingest_identity_index_disabled_without_principals(monkeypatch):
     monkeypatch.delenv("ABEN_PRINCIPALS", raising=False)
     assert server._ingest_identity_index() is None             # no per-actor binding in solo/default mode
+
+
+def test_gemini_model_path_rejects_traversal():
+    from abenlux.capture.gateway import _GEMINI_MODEL_PATH
+    assert _GEMINI_MODEL_PATH.match("gemini-2.5-flash:generateContent")     # legit model:method
+    assert not _GEMINI_MODEL_PATH.match("../../secret:generateContent")     # path traversal blocked
+    assert not _GEMINI_MODEL_PATH.match("models/evil/segment")              # extra segments blocked
+
+
+def test_decode_body_bounds_a_decompression_bomb():
+    import zlib
+    from abenlux.capture.gateway import _MAX_DECODE_BYTES, _decode_body
+    bomb = zlib.compressobj(9, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+    blob = bomb.compress(b"\x00" * (_MAX_DECODE_BYTES + 5_000_000)) + bomb.flush()
+    out = _decode_body(blob, "gzip")
+    assert len(out) <= _MAX_DECODE_BYTES                                    # truncated, memory bounded
+
+
+def test_ingest_rejects_oversized_body(monkeypatch):
+    monkeypatch.setattr(server, "_MAX_INGEST_BYTES", 50)
+    client = TestClient(server.app)
+    big = [{"event_id": "x" * 200, "ts": 1.0, "tier": "t", "provider": "anthropic",
+            "actor_pseudonym": "p", "request_model": "m", "input_tokens": 1, "output_tokens": 1,
+            "duplicate_history_tokens": 0}]
+    r = client.post("/v1/derived", json=big, headers={"Authorization": "Bearer dev-ingest-token"})
+    assert r.status_code == 413                                            # bounded before JSON parse

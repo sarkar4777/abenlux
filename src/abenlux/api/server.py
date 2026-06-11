@@ -16,6 +16,7 @@ authenticates with a bearer token and renders the role-appropriate view.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -163,6 +164,7 @@ def _harden_inbound(rec: DerivedRecord) -> None:
 # a forwarded batch is bounded: one POST cannot monopolize the broker's process-global lock or churn
 # its signal buffer (a buggy/hostile edge could otherwise evict the real cohort with one huge request).
 _MAX_INGEST_BATCH = int(os.getenv("ABEN_MAX_INGEST_BATCH", "1000"))
+_MAX_INGEST_BYTES = int(float(os.getenv("ABEN_MAX_INGEST_MB", "32")) * 1024 * 1024)  # bound body before parse
 
 
 @app.post("/v1/derived")
@@ -170,7 +172,15 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
     if token not in SETTINGS.ingest_tokens:
         raise HTTPException(status_code=401, detail="invalid ingest token")
-    payload = await request.json()
+    # bound the body BEFORE parsing: request.json() would otherwise buffer an arbitrarily large payload
+    # into memory (a cheap DoS) before the batch-size check below ever runs.
+    raw = await request.body()
+    if len(raw) > _MAX_INGEST_BYTES:
+        raise HTTPException(status_code=413, detail="payload too large")
+    try:
+        payload = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="invalid JSON") from None
     items = payload if isinstance(payload, list) else [payload]
     if len(items) > _MAX_INGEST_BATCH:
         raise HTTPException(status_code=413, detail=f"batch too large (max {_MAX_INGEST_BATCH})")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -297,24 +298,30 @@ def _monitor_for(actor: str) -> SessionWasteMonitor:
     return mon
 
 
+# cap on DECOMPRESSED capture bytes: a small compressed body can expand to gigabytes (a zip bomb), so
+# bound the output. capture is best-effort, so a truncated decode is fine - the developer's stream is
+# the untouched passthrough, this only feeds the meter.
+_MAX_DECODE_BYTES = _MAX_CAPTURE_BYTES * 4
+
+
 def _decode_body(data: bytes, content_encoding: str) -> bytes:
     # decompress a captured response body by its Content-Encoding so the parsers see plain JSON/SSE.
     # best effort: an unknown or unavailable codec (e.g. brotli without the lib) returns the raw bytes,
-    # and capture then fails loudly for that one call rather than corrupting anything.
+    # and capture then fails loudly for that one call rather than corrupting anything. the output is
+    # bounded so a decompression bomb cannot exhaust gateway memory.
+    import zlib
     enc = (content_encoding or "").lower()
     try:
         if "gzip" in enc or "x-gzip" in enc:
-            import gzip
-            return gzip.decompress(data)
+            return zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(data, _MAX_DECODE_BYTES)
         if "deflate" in enc:
-            import zlib
             try:
-                return zlib.decompress(data)
+                return zlib.decompressobj(zlib.MAX_WBITS).decompress(data, _MAX_DECODE_BYTES)
             except zlib.error:
-                return zlib.decompress(data, -zlib.MAX_WBITS)   # raw deflate (no zlib header)
-        if "br" in enc:
+                return zlib.decompressobj(-zlib.MAX_WBITS).decompress(data, _MAX_DECODE_BYTES)
+        if "br" in enc and len(data) <= _MAX_CAPTURE_BYTES // 4:
             import brotli                                       # optional; httpx[brotli] provides it
-            return brotli.decompress(data)
+            return brotli.decompress(data)[:_MAX_DECODE_BYTES]
     except Exception:
         return data
     return data
@@ -541,9 +548,18 @@ async def azure_openai_chat(request: Request, deployment: str):
                         upstream=SETTINGS.azure_upstream)
 
 
+# a Gemini model path is "<model>:<method>", e.g. gemini-2.5-flash:streamGenerateContent. it must not
+# contain path traversal or extra segments that would let the :path catch-all build an arbitrary
+# upstream URL (SSRF / reach to another upstream path).
+_GEMINI_MODEL_PATH = re.compile(r"^[A-Za-z0-9._-]+:[A-Za-z]+$")
+
+
 @app.post("/v1beta/models/{model_path:path}")
 async def gemini_generate(request: Request, model_path: str):
     # gemini's path encodes the model + method, e.g. gemini-3.5-flash:streamGenerateContent
+    if not _GEMINI_MODEL_PATH.match(model_path):
+        return JSONResponse(status_code=400, content={"error": {"type": "invalid_request_error",
+                            "message": "invalid gemini model path"}})
     return await _proxy(request, Provider.GOOGLE, f"/v1beta/models/{model_path}")
 
 def _ingest_otlp(payload: dict) -> int:

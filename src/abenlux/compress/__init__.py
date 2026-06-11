@@ -256,10 +256,19 @@ class CompressionResult:
     body: dict
     saved_tokens: int = 0
     applied: list[str] = field(default_factory=list)
+    per_strategy: dict = field(default_factory=dict)   # strategy name -> input tokens it removed
 
 
 def _body_tokens(body: dict, provider: str) -> int:
-    return sum(estimate_tokens(c[k]) for c, k in _slots(body, provider, {"system", "user", "assistant"}))
+    import json as _json
+    total = sum(estimate_tokens(c[k]) for c, k in _slots(body, provider, {"system", "user", "assistant"}))
+    # tool/function definitions are billed input too, so slim_tools' saving is only visible if we count
+    # them. serialize each definition and estimate - cheap and provider-agnostic.
+    for key in ("tools", "functions"):
+        arr = body.get(key)
+        if isinstance(arr, list):
+            total += sum(estimate_tokens(_json.dumps(item)) for item in arr if isinstance(item, (dict, list, str)))
+    return total
 
 
 def enabled_strategies(spec: str | None) -> list[Strategy]:
@@ -280,9 +289,10 @@ def compress_request(body: dict, provider: str, strategies_list: list[Strategy])
     raises or produces an empty/invalid body is skipped, so compression can never break the call."""
     if not isinstance(body, dict) or not strategies_list:
         return CompressionResult(body=body)
-    before = _body_tokens(body, provider)
     cur = body
     applied: list[str] = []
+    per: dict = {}
+    prev = _body_tokens(body, provider)
     for strat in strategies_list:
         try:
             new = strat.fn(cur, provider)
@@ -291,7 +301,9 @@ def compress_request(body: dict, provider: str, strategies_list: list[Strategy])
         if isinstance(new, dict) and new:
             cur = new
             applied.append(strat.name)
+            now = _body_tokens(cur, provider)        # marginal tokens this strategy removed in the chain
+            per[strat.name] = max(0, prev - now)
+            prev = now
     if not applied:
         return CompressionResult(body=body)
-    after = _body_tokens(cur, provider)
-    return CompressionResult(body=cur, saved_tokens=max(0, before - after), applied=applied)
+    return CompressionResult(body=cur, saved_tokens=sum(per.values()), applied=applied, per_strategy=per)

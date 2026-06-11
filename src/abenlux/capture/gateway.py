@@ -92,8 +92,15 @@ _EXACT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 _EXACT_MAX = 512
 
 
-def _exact_key(provider: Provider, body: bytes) -> str:
-    return f"{provider.value}:{hashlib.blake2b(body, digest_size=16).hexdigest()}"
+def _exact_key(provider: Provider, body: bytes, actor: str, tenant: str) -> str:
+    # scoped to the actor (and tenant) so a hit only ever serves a developer their OWN identical
+    # repeat. never one person's response to another - that would bleed content across actors and
+    # mis-attribute the avoided cost. in production each developer runs their own edge agent, so this
+    # is naturally per-person; the scope just makes a shared-gateway deployment correct too.
+    h = hashlib.blake2b(body, digest_size=16)
+    h.update(b"\x00")
+    h.update(f"{tenant}\x00{actor}".encode())
+    return f"{provider.value}:{h.hexdigest()}"
 
 
 def _exact_get(key: str):
@@ -368,6 +375,9 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         if compress_info:  # token-savings facts from the edge compression layer (content-free counts)
             result.record.saved_input_tokens = int(compress_info.get("saved", 0))
             result.record.compression = compress_info.get("applied") or None
+            ps = compress_info.get("per_strategy")
+            if ps:
+                result.record.compression_detail = json.dumps(ps)
             if compress_info.get("cached"):
                 # served from the local cache: no upstream call happened, so it cost nothing, and the
                 # whole input was avoided. the collector honors served_from_cache and does not re-price.
@@ -414,11 +424,13 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
                 body = json.dumps(cres.body).encode()
                 compress_info["saved"] = cres.saved_tokens
                 compress_info["applied"] = ",".join(cres.applied)
+                compress_info["per_strategy"] = cres.per_strategy
     except Exception:
         _log_capture_error("compress")
 
     # --- exact-match cache: a byte-identical NON-STREAMED repeat is served locally, upstream call avoided
-    cache_key = (_exact_key(provider, body)
+    _actor = overrides.get("actor") or current_actor() or "local"
+    cache_key = (_exact_key(provider, body, _actor, getattr(SETTINGS, "tenant_id", "default"))
                  if getattr(SETTINGS, "exact_cache", False) and not streamed else None)
     if cache_key is not None:
         hit = _exact_get(cache_key)

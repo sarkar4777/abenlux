@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-275%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-278%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -91,7 +91,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 275 tests
+make test             # 278 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -358,6 +358,13 @@ the edge agent redacts on the device and forwards only the content-free `Derived
 
 ## Save tokens automatically (the compression layer)
 
+<div align="center">
+<img src="docs/compression-before-after.png" alt="Before/after: 67% lower AI spend with the compression layer on" width="900">
+<br><em>Real before/after: the same 12-developer, multi-turn workload through the gateway, billed by
+the real model providers. Compression on cut input tokens 68% and cost 67% with no change to any tool.
+Reproduce it from <a href="examples/compression-e2e/">examples/compression-e2e</a>.</em>
+</div>
+
 Because the edge agent is a loopback proxy, it can shrink the **outbound request** before it is
 forwarded. This runs for **every tool, IDE or CLI, any provider**, with no per-tool setup and no
 context switching. Two rules keep it safe for developers:
@@ -379,7 +386,16 @@ context switching. Two rules keep it safe for developers:
 | exact-match cache | serve a byte-identical non-streamed repeat for free (`ABEN_EXACT_CACHE`) | ✅ | **on** |
 
 The realized savings (tokens removed, calls served from cache) show up beside spend in `abenlux report`
-and the dashboard. These strategies are abenlux's own bounded implementations, built to **interoperate
+and the dashboard, **attributed by strategy** so you see which technique earned which dollar:
+
+<div align="center">
+<img src="docs/compression-dashboard.png" alt="Management dashboard: compression yield with per-strategy attribution" width="900">
+<br><em>The real management dashboard from a 24-developer, 5-turn run: the Compression-yield card shows
+tokens removed and calls served free from the cache, broken down by strategy (command-output trim,
+DocLang/OTSL, JSON minify), beside spend, reuse-yield and budgets. All k-anonymized.</em>
+</div>
+
+These strategies are abenlux's own bounded implementations, built to **interoperate
 with and credit** the open tools that pioneered them:
 
 - **[RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk)** (MIT) compresses command output at the
@@ -471,7 +487,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-275 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+278 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
@@ -489,7 +505,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 275 tests
+make test       # 278 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

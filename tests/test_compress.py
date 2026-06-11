@@ -74,6 +74,7 @@ def test_slim_tools_drops_duplicate_definitions():
     out = compress_request(body, "anthropic", [strategies()["slim_tools"]])
     names = [t["name"] for t in out.body["tools"]]
     assert names == ["search", "edit"]                   # exact dupe removed, distinct kept
+    assert out.saved_tokens > 0                           # the dropped definition is billed input, so it counts
 
 
 def test_openai_and_gemini_shapes_are_handled():
@@ -109,6 +110,49 @@ def test_default_strategies_are_lossless_and_non_content_rewriting():
     for s in strategies().values():
         if s.default_on:
             assert s.lossless and not s.rewrites_prompt
+
+
+def test_per_strategy_attribution_sums_to_total():
+    # the chain reports what EACH strategy removed, and the parts add up to the whole
+    noisy = "\x1b[31mE\x1b[0m\n" + "\n".join(["dupe line"] * 40)
+    pretty = json.dumps({"a": [1, 2, 3], "b": {"c": "d"}}, indent=2)
+    body = {"model": "claude-opus-4-8",
+            "messages": [{"role": "user", "content": noisy + "\n```json\n" + pretty + "\n```"}]}
+    out = compress_request(body, "anthropic", [strategies()["command_trim"], strategies()["compress_json"]])
+    assert set(out.per_strategy) == {"command_trim", "compress_json"}
+    assert all(v >= 0 for v in out.per_strategy.values())
+    assert sum(out.per_strategy.values()) == out.saved_tokens > 0
+
+
+def test_slim_tools_attribution_counts_tool_tokens():
+    tool = {"name": "search", "description": "search the repo with a long enough schema to matter",
+            "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}}
+    body = {"model": "claude-opus-4-8", "messages": [{"role": "user", "content": "go"}],
+            "tools": [tool, dict(tool), {"name": "edit", "description": "edit"}]}
+    out = compress_request(body, "anthropic", [strategies()["slim_tools"]])
+    assert out.per_strategy.get("slim_tools", 0) > 0     # the dropped duplicate definition is billed input
+
+
+def test_report_attributes_compression_by_strategy(tmp_path):
+    import json as _json
+
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "c.db")
+    for i in range(5):
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="claude-opus-4-8",
+                               input_tokens=1000, output_tokens=100, duplicate_history_tokens=0,
+                               cost_usd=2.0, objective_id="O", objective_label="O", is_orphan=False,
+                               saved_input_tokens=500, compression="command_trim,otsl_tables",
+                               compression_detail=_json.dumps({"command_trim": 400, "otsl_tables": 100})))
+    rep = management_report(s, k=5)
+    bys = rep["compression"]["by_strategy"]
+    assert bys["command_trim"]["tokens"] == 2000 and bys["otsl_tables"]["tokens"] == 500
+    # ordered by tokens desc
+    assert list(bys) == ["command_trim", "otsl_tables"]
+    s.close()
 
 
 def test_report_surfaces_compression_yield(tmp_path):

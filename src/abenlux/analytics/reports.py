@@ -80,10 +80,13 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     # compression yield: tokens the edge compression layer removed from outbound requests + calls served
     # whole from the local exact-match cache, valued at the blended rate. realized savings, beside spend.
     saved_tokens = totals.get("saved_input_tokens", 0)
+    by_strategy = store.compression_breakdown(tenant)
     compression = {
         "saved_input_tokens": saved_tokens,
         "saved_usd": round(saved_tokens * blended, 2),
         "cache_hits": totals.get("cache_hits", 0),
+        "by_strategy": {k: {"tokens": v, "usd": round(v * blended, 2)}
+                        for k, v in sorted(by_strategy.items(), key=lambda kv: -kv[1])},
     }
     dup = totals["dup_tokens"]
     uncached_dup = max(0, dup - totals.get("cache_read", 0))

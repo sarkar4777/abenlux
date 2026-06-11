@@ -200,6 +200,7 @@ class DerivedRecord:
     # token-savings facts from the edge compression layer (content-free counts, never the prompt):
     saved_input_tokens: int = 0          # input tokens the rewrite strategies removed before forwarding
     compression: Optional[str] = None    # which strategies applied (csv), e.g. "prefix_stabilize,otsl_tables"
+    compression_detail: Optional[str] = None   # JSON map strategy -> tokens it removed (content-free counts)
     served_from_cache: bool = False      # the whole call was served from the local exact-match cache
 
     def to_dict(self) -> dict[str, Any]:

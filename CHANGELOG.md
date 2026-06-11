@@ -26,6 +26,13 @@ credit the open tools that pioneered each lever (RTK, DocLang/Docling, Headroom,
 - Compression-yield surfacing. DerivedRecord carries content-free saved_input_tokens, compression, and
   served_from_cache. The management report, CLI report, and dashboard show realized savings (tokens
   removed, calls served from cache) beside spend, never inside it.
+- Per-strategy attribution. compress_request reports the tokens each strategy removed; the gateway
+  records a content-free per-strategy map (compression_detail); the report, CLI and dashboard attribute
+  the compression yield by technique. _body_tokens now counts tool/function definitions so slim_tools
+  savings are no longer undercounted (#36).
+- Real-model before/after harness (examples/compression-e2e): drives 24 developers x 5 multi-turn
+  sessions through two gateways (compress off vs all) against real providers, prints a before/after
+  table plus per-strategy attribution and a real prompt-cache A/B, and renders product screenshots.
 - agent install wires RTK's tool-hook (rtk init -g) when RTK is present; RTK runs below abenlux so the
   two stack.
 

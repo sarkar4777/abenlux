@@ -18,3 +18,6 @@ CLAUDE.md
 
 # local dev stack state (make dev)
 .dev/
+
+# compression-e2e generated artifacts (regenerate by running compression_e2e.py)
+examples/compression-e2e/evidence/

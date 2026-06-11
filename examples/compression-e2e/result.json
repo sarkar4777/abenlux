@@ -1,0 +1,73 @@
+{
+  "rocket-base": {
+    "calls": 120,
+    "input_tokens": 527229,
+    "cache_read_tokens": 8108,
+    "cost_usd": 0.4717,
+    "saved_input_tokens": 0,
+    "cache_hits": 0,
+    "actors": 24
+  },
+  "rocket-zip": {
+    "calls": 120,
+    "input_tokens": 207300,
+    "cache_read_tokens": 2008,
+    "cost_usd": 0.1922,
+    "saved_input_tokens": 239529,
+    "cache_hits": 24,
+    "actors": 24
+  },
+  "per_strategy": [
+    {
+      "strategy": "prefix_stabilize",
+      "applied": true,
+      "saved_tokens": 0,
+      "note": "move an injected date/id out of the cache-stable prefix"
+    },
+    {
+      "strategy": "command_trim",
+      "applied": true,
+      "saved_tokens": 7992,
+      "note": "RTK-style: strip ANSI, collapse repeats, truncate huge output"
+    },
+    {
+      "strategy": "otsl_tables",
+      "applied": true,
+      "saved_tokens": 572,
+      "note": "DocLang-style: verbose HTML tables to compact OTSL"
+    },
+    {
+      "strategy": "compress_json",
+      "applied": true,
+      "saved_tokens": 415,
+      "note": "Headroom-style: minify embedded JSON blobs"
+    },
+    {
+      "strategy": "slim_tools",
+      "applied": true,
+      "saved_tokens": 317,
+      "note": "Bifrost-style: drop duplicate tool definitions"
+    },
+    {
+      "strategy": "ALL (combined)",
+      "applied": true,
+      "saved_tokens": 8580,
+      "note": "every strategy, one request"
+    }
+  ],
+  "cache_ab": {
+    "volatile_in_prefix": {
+      "read": 0,
+      "create": 5081
+    },
+    "volatile_moved_out": {
+      "read": 5041,
+      "create": 0
+    }
+  },
+  "delta": {
+    "input_token_reduction_pct": 60.7,
+    "cost_reduction_pct": 59.3,
+    "dollars_saved": 0.2795
+  }
+}

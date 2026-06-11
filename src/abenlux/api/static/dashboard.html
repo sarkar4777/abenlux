@@ -266,6 +266,31 @@ function driftBanner(trend){
   return `<div class="card" style="border-color:var(--warn);color:var(--warn);margin-bottom:16px">⚠ Spend drift - ${bits.join(" · ")}</div>`;
 }
 
+const CZ_LABEL = {prefix_stabilize:"Prefix-Break Localizer", command_trim:"Command-output trim (RTK)",
+  otsl_tables:"DocLang / OTSL tables", compress_json:"JSON minify (Headroom)", slim_tools:"Tool-def slim (Bifrost)"};
+function compressionView(cz){
+  if(!(cz.saved_input_tokens || cz.cache_hits))
+    return '<div class="muted">no compression savings yet. the edge layer stabilizes the cache prefix automatically; enable more strategies with ABEN_COMPRESS.</div>';
+  const bys = cz.by_strategy || {};
+  const vals = Object.values(bys).map(d=>d.tokens);
+  const max = Math.max(1, ...vals);
+  let bars = Object.entries(bys).filter(([,d])=>d.tokens>0).map(([n,d])=>{
+    const w = Math.max(3, Math.round(d.tokens/max*100));
+    return `<div style="display:grid;grid-template-columns:200px 1fr 150px;align-items:center;gap:14px;margin:7px 0">
+      <div style="color:var(--ink);font-weight:600">${CZ_LABEL[n]||n}</div>
+      <div style="background:#0e1b2b;border-radius:7px;height:22px;overflow:hidden">
+        <div style="width:${w}%;height:100%;background:linear-gradient(90deg,#2dd4bf,#34e0c4);border-radius:7px"></div></div>
+      <div style="text-align:right;color:var(--muted);font-variant-numeric:tabular-nums">${fmtN(d.tokens)} tok · ${fmtUSD(d.usd)}</div></div>`;
+  }).join("");
+  const reorder = (bys.prefix_stabilize && !bys.prefix_stabilize.tokens)
+    ? '<div class="muted" style="margin-top:6px">Prefix-Break Localizer also ran on cache-eligible calls (reorders the prefix for caching, removes no tokens)</div>' : "";
+  return `<div style="display:flex;gap:30px;align-items:baseline;margin-bottom:16px">
+      <div><div class="val" style="color:var(--good);font-size:30px">${fmtUSD(cz.saved_usd||0)}</div><div class="muted">saved by compression</div></div>
+      <div><div class="val" style="font-size:30px">${fmtN(cz.saved_input_tokens||0)}</div><div class="muted">input tokens removed</div></div>
+      <div><div class="val" style="font-size:30px">${fmtN(cz.cache_hits||0)}</div><div class="muted">calls served free from cache</div></div>
+    </div>
+    ${bars ? '<div class="muted" style="margin-bottom:4px">attribution by strategy</div>'+bars+reorder : reorder}`;
+}
 function reuseYieldView(ry){
   if(!ry) return '<div class="muted">no data yet</div>';
   if(!ry.reuse_avoided_usd){
@@ -296,14 +321,7 @@ async function loadManagement(){
     kpi("Orphan spend", (rep.orphan_token_share*100).toFixed(1)+"%", "unattributed - the headline waste metric")+
     kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling");
   $("#reuseYield").innerHTML = reuseYieldView(ry);
-  const cz = rep.compression || {};
-  $("#compression").innerHTML = (cz.saved_input_tokens || cz.cache_hits)
-    ? `<div style="display:flex;gap:24px;align-items:baseline">
-         <div><div class="val" style="color:var(--good);font-size:26px">${fmtUSD(cz.saved_usd||0)}</div><div class="muted">saved by compression</div></div>
-         <div><div class="val" style="font-size:26px">${fmtN(cz.saved_input_tokens||0)}</div><div class="muted">input tokens removed</div></div>
-         <div><div class="val" style="font-size:26px">${fmtN(cz.cache_hits||0)}</div><div class="muted">calls served from cache</div></div>
-       </div>`
-    : '<div class="muted">no compression savings yet. the edge layer stabilizes the cache prefix automatically; enable more strategies with ABEN_COMPRESS.</div>';
+  $("#compression").innerHTML = compressionView(rep.compression || {});
   $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
   $("#investment").innerHTML = investmentView(rep.investment, rep.by_work_type||[]);
   $("#newInitiatives").innerHTML = newInitiativesView(rep.new_initiatives);

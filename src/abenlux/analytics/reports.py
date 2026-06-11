@@ -96,7 +96,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         # historically but by only 1-2 this period is still suppressed for the period's spend.
         for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now, tenant=tenant):
             row = b.to_dict()
-            actors = store.objective_window_actors(b.objective_id, ps, now + 1e-9, tenant=tenant)
+            actors = store.objective_window_actors(b.objective_id, ps, now + 1.0, tenant=tenant)
             if 0 < actors < k:                          # sub-k and non-empty -> hide the spend figures
                 for f in ("spent_usd", "pct", "forecast_usd", "projected_overrun_usd"):
                     row[f] = None

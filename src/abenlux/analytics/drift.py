@@ -67,7 +67,9 @@ def spend_trend(
         return None
     mid = split_ts if split_ts is not None else (lo + hi) / 2.0
     prior = store.window_stats(lo, mid, tenant=tenant)
-    recent = store.window_stats(mid, hi + 1e-9, tenant=tenant)  # include the max-ts row in the recent window
+    # + 1.0s (not 1e-9, which is below float64 ULP at epoch scale) so the max-ts row is included even
+    # on a coarse-clock platform where two timestamps can be bit-identical.
+    recent = store.window_stats(mid, hi + 1.0, tenant=tenant)
     if prior["events"] == 0 or recent["events"] == 0:
         return None
     if prior["actors"] < k or recent["actors"] < k:

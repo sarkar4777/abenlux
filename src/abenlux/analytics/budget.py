@@ -85,7 +85,10 @@ def budget_status(
     for obj in kg.objectives.values():
         if not obj.monthly_budget_usd:
             continue
-        spent = store.objective_window_cost(obj.id, period_start, now + 1e-9, tenant=tenant)
+        # the window end is half-open (ts < end), so nudge it past `now` to INCLUDE a record stamped at
+        # exactly now. it must be a full second, not 1e-9: at epoch magnitude (~1.78e9) float64 ULP is
+        # ~2.4e-7, so + 1e-9 is lost and a coarse-clock platform (Windows py3.10) would drop the record.
+        spent = store.objective_window_cost(obj.id, period_start, now + 1.0, tenant=tenant)
         # floor the elapsed fraction used for the run-rate projection: a small spend a few minutes into
         # the period must not extrapolate to an absurd monthly forecast (caps the multiple at ~25x).
         forecast = spent / max(elapsed, 0.04)

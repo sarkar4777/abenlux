@@ -77,7 +77,10 @@ class CollaborationBroker:
         # Chinese wall, even when an objective carries no client tag), never across residency boundaries
         if x.org != y.org:
             return False
-        if x.client and y.client and x.client != y.client:
+        # the Chinese wall: a client-tagged signal matches ONLY another with the SAME client. a signal
+        # with no client tag could be anything, so a client-tagged one must not match it either - block
+        # whenever the client tags differ, including client-vs-none.
+        if (x.client or y.client) and x.client != y.client:
             return False
         return x.residency == y.residency
 

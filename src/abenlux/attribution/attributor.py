@@ -80,7 +80,14 @@ class KnowledgeGraph:
         for prefix, oid in (data.get("ticket_prefix_to_objective") or {}).items():
             kg.map_ticket_prefix(prefix, oid)
         if "semantic_threshold" in data:
-            kg.semantic_threshold = float(data["semantic_threshold"])
+            # a threshold of 0 (or negative) would make the semantic fallback attribute EVERYTHING,
+            # disguising all orphan spend as confidently matched. only accept a value in (0, 1].
+            try:
+                t = float(data["semantic_threshold"])
+                if 0.0 < t <= 1.0:
+                    kg.semantic_threshold = t
+            except (TypeError, ValueError):
+                pass
         if embed_fn is not None:
             kg.embed_objectives(embed_fn)
         return kg

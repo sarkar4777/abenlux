@@ -165,3 +165,19 @@ def test_solved_reuse_mode_at_collector(collector):
     b.submit(TopicSignal("expert", EMB, "idempotent retries", is_solved=True))
     out = b.submit(TopicSignal("newbie", EMB, "idempotent retries"))
     assert out and out[0].mode == "solved_reuse"
+
+
+def test_chinese_wall_blocks_client_vs_no_client_signal():
+    # a client-tagged signal must not match a signal with no client tag (it could be any client's work)
+    b = CollaborationBroker(threshold=0.5)
+    b.submit(TopicSignal("alice", EMB, "topic", client="acme", org="o", residency="eu"))
+    matches = b.submit(TopicSignal("bob", EMB, "topic", client=None, org="o", residency="eu"))
+    assert matches == []
+
+
+def test_semantic_threshold_out_of_range_is_ignored(tmp_path):
+    # a threshold of 0 would disguise all orphan spend as attributed; the loader must reject it
+    p = tmp_path / "kg.yaml"
+    p.write_text("objectives:\n  - {id: o1, label: One}\nsemantic_threshold: 0\n", encoding="utf-8")
+    kg = KnowledgeGraph.from_yaml(str(p))
+    assert kg.semantic_threshold == 0.55     # kept the safe default, ignored the invalid 0

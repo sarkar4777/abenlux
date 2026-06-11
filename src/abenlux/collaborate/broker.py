@@ -43,6 +43,7 @@ class TopicSignal:
     client: Optional[str] = None
     residency: str = "eu"
     org: str = "default"        # the org this signal belongs to - two different orgs never match
+    objective_id: Optional[str] = None  # KG-validated objective; drives the same-objective bar (not the label)
     is_solved: bool = False     # part of the reusable solved-pattern corpus
 
 
@@ -91,7 +92,13 @@ class CollaborationBroker:
                 continue
             sim = cosine(sig.topic_embedding, other.topic_embedding)
             solved = other.is_solved or sig.is_solved
-            same_obj = bool(sig.topic_label and other.topic_label and sig.topic_label == other.topic_label)
+            # prefer the KG-VALIDATED objective_id for the same-objective bar. the free-text topic_label
+            # is edge-supplied and spoofable, so a forged label must not be enough to select the looser
+            # bar. fall back to label equality only when neither side carries a validated id (offline/no-KG).
+            if sig.objective_id and other.objective_id:
+                same_obj = sig.objective_id == other.objective_id
+            else:
+                same_obj = bool(sig.topic_label and other.topic_label and sig.topic_label == other.topic_label)
             bar = self.threshold if (same_obj or solved) else self.cross_threshold
             if sim >= bar:
                 mode = "solved_reuse" if solved else "live_duplication"

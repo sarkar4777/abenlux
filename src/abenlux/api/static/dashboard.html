@@ -340,15 +340,15 @@ function benchTable(out){
   const head = `<div class="bar-row" style="grid-template-columns:1fr 90px 110px 130px;font-weight:600;color:var(--muted)">
     <div>metric</div><div>you</div><div>cohort median</div><div>your standing</div></div>`;
   const rows = comp.map(c=>{
-    const good = c.higher_is_better ? c.your_percentile>=0.5 : c.your_percentile>=0.5;
-    const col = c.your_percentile>=0.66 ? "var(--good)" : (c.your_percentile<=0.33 ? "var(--bad)" : "var(--warn)");
-    const pctl = Math.round(c.your_percentile*100);
+    const p = c.your_percentile;
+    const col = p==null ? "var(--muted)" : (p>=0.66 ? "var(--good)" : (p<=0.33 ? "var(--bad)" : "var(--warn)"));
+    const pctl = p==null ? "—" : Math.round(p*100)+"th pctile";
     const dir = c.higher_is_better ? "higher is better" : "lower is better";
     return `<div class="bar-row" style="grid-template-columns:1fr 90px 110px 130px">
       <div class="bar-label" title="${dir}">${c.label}</div>
       <div class="bar-val">${fmtRatio(c.metric,c.you)}</div>
       <div class="bar-val muted">${fmtRatio(c.metric,c.cohort_median)}</div>
-      <div class="bar-val" style="color:${col}">${pctl}th pctile</div></div>`;
+      <div class="bar-val" style="color:${col}">${pctl}</div></div>`;
   }).join("");
   return head+rows;
 }

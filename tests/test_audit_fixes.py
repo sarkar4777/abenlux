@@ -147,3 +147,44 @@ def test_budget_forecast_at_risk_needs_enough_period_elapsed():
     assert _status(spent=85.0, budget=100.0, forecast=90.0, elapsed=0.01) == "at_risk"
     # over budget is over, anytime
     assert _status(spent=120.0, budget=100.0, forecast=120.0, elapsed=0.01) == "over"
+
+
+def test_valid_embedding_rejects_garbage_vectors():
+    from abenlux.api.server import _valid_embedding
+    assert _valid_embedding([1.0, 0.0, 0.0]) is True
+    assert _valid_embedding([0.0, 0.0]) is False          # zero norm
+    assert _valid_embedding([float("nan"), 1.0]) is False  # NaN
+    assert _valid_embedding([float("inf"), 1.0]) is False  # inf
+    assert _valid_embedding("not a list") is False
+    assert _valid_embedding([1.0]) is False                # too short
+    assert _valid_embedding([1.0] * 5000) is False         # absurdly long
+
+
+def test_ingest_batch_size_is_bounded(monkeypatch):
+    from fastapi.testclient import TestClient
+    from abenlux.api import server
+    monkeypatch.setattr(server, "_MAX_INGEST_BATCH", 3)
+    c = TestClient(server.app)
+    big = [{"event_id": f"e{i}", "ts": 1.0} for i in range(10)]
+    r = c.post("/v1/derived", json=big, headers={"Authorization": "Bearer dev-ingest-token"})
+    assert r.status_code == 413                            # one POST can't monopolize the broker
+
+
+def test_broker_same_objective_bar_uses_validated_id_not_label():
+    # a spoofed label must not select the looser same-objective bar; the validated objective_id does
+    from abenlux.collaborate.broker import CollaborationBroker, TopicSignal
+    b = CollaborationBroker()
+    # a vector that clears the same-objective bar (0.40) but NOT the cross-objective bar (0.55)
+    v1 = [1.0, 0.0, 0.0]
+    v2 = [0.7, 0.714, 0.0]   # cosine ~0.7 with v1 -> >=0.55, too strong; use a weaker overlap
+    import math
+    # craft cosine ~0.45 (between the two bars)
+    theta = math.acos(0.45)
+    v2 = [math.cos(theta), math.sin(theta), 0.0]
+    # same validated objective_id -> 0.40 bar -> matches at cosine 0.45
+    b.submit(TopicSignal("a", v1, "Label A", objective_id="obj-1"))
+    assert any(m.b == "a" for m in b.submit(TopicSignal("b", v2, "Label A", objective_id="obj-1")))
+    # DIFFERENT objective_id but the SAME spoofed label -> stricter 0.55 bar -> no match at 0.45
+    b2 = CollaborationBroker()
+    b2.submit(TopicSignal("c", v1, "Label A", objective_id="obj-1"))
+    assert b2.submit(TopicSignal("d", v2, "Label A", objective_id="obj-2")) == []

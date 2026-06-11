@@ -145,6 +145,11 @@ def _harden_inbound(rec: DerivedRecord) -> None:
             setattr(rec, f, redact(v).text)
 
 
+# a forwarded batch is bounded: one POST cannot monopolize the broker's process-global lock or churn
+# its signal buffer (a buggy/hostile edge could otherwise evict the real cohort with one huge request).
+_MAX_INGEST_BATCH = int(os.getenv("ABEN_MAX_INGEST_BATCH", "1000"))
+
+
 @app.post("/v1/derived")
 async def ingest_derived(request: Request, authorization: str | None = Header(default=None)):
     token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
@@ -152,6 +157,8 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
         raise HTTPException(status_code=401, detail="invalid ingest token")
     payload = await request.json()
     items = payload if isinstance(payload, list) else [payload]
+    if len(items) > _MAX_INGEST_BATCH:
+        raise HTTPException(status_code=413, detail=f"batch too large (max {_MAX_INGEST_BATCH})")
     store = _store()
     mstore = _matches()
     ledger = _ledger()
@@ -193,10 +200,26 @@ def _org_for(rec: DerivedRecord, tenants, cache: dict) -> str:
     return cache[tenant]
 
 
+def _valid_embedding(emb) -> bool:
+    # the embedding is caller-supplied; a NaN/inf/zero-norm or absurdly-sized vector must never reach
+    # the broker (it would corrupt cosine math or be a cheap way to pollute matching). content-free check.
+    import math
+    if not isinstance(emb, list) or not (2 <= len(emb) <= 4096):
+        return False
+    norm = 0.0
+    for x in emb:
+        if not isinstance(x, (int, float)) or not math.isfinite(x):
+            return False
+        norm += x * x
+    return norm > 0.0
+
+
 def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: str = "default") -> None:
     # double-blind matching at the collector over content-free signals. writes one row per side,
     # each owner sees only their own. management never sees this - it is not a report.
     if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
+        return
+    if not _valid_embedding(rec.embedding):     # reject garbage vectors before they hit the broker
         return
     obj = _kg.objectives.get(rec.objective_id)
     tenant = getattr(rec, "tenant_id", None) or "default"
@@ -205,6 +228,9 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: s
         topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
         residency=getattr(rec, "residency", None) or "eu",  # enforce the residency wall centrally
         org=org,                                            # enforce the org wall centrally
+        # only a KG-RESOLVED objective is a trusted same-objective key (None for an unknown/forged id,
+        # which then needs the stricter cross-objective bar instead of the spoofable label).
+        objective_id=rec.objective_id if obj is not None else None,
     )
     for m in _broker.submit(sig):
         mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)

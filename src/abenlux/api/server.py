@@ -136,9 +136,12 @@ def _harden_inbound(rec: DerivedRecord) -> None:
     total). also re-redact the free-text metadata fields as defense in depth - they should be slugs."""
     from abenlux.pricing import cost_usd
     from abenlux.processing.redact import redact
-    cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
-                  cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
-    rec.cost_usd, rec.cost_priced = cb.total, cb.priced
+    if getattr(rec, "served_from_cache", False):
+        rec.cost_usd, rec.cost_priced = 0.0, True   # a local-cache hit made no upstream call, so it cost nothing
+    else:
+        cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
+                      cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
+        rec.cost_usd, rec.cost_priced = cb.total, cb.priced
     for f in ("repo", "objective_label", "ticket_id", "work_type", "tool"):
         v = getattr(rec, f, None)
         if isinstance(v, str) and v:

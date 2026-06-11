@@ -19,6 +19,7 @@ Then: ANTHROPIC_BASE_URL=http://127.0.0.1:8088 aider ...
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -83,6 +84,38 @@ _MAX_MONITORS = 4096
 # this only guards against a pathologically large body (e.g. a non-LLM payload mistakenly proxied)
 # ballooning gateway memory. passthrough to the tool is never capped. override via ABEN_MAX_CAPTURE_MB.
 _MAX_CAPTURE_BYTES = int(float(os.getenv("ABEN_MAX_CAPTURE_MB", "16")) * 1024 * 1024)
+
+# exact-match request cache: a byte-identical NON-STREAMED request within the TTL is served from this
+# local cache without an upstream call (lossless - the same response - and the whole call is avoided).
+# the cached response is content and stays on-device, never forwarded. bounded LRU with TTL.
+_EXACT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_EXACT_MAX = 512
+
+
+def _exact_key(provider: Provider, body: bytes) -> str:
+    return f"{provider.value}:{hashlib.blake2b(body, digest_size=16).hexdigest()}"
+
+
+def _exact_get(key: str):
+    with _state_lock:
+        ent = _EXACT_CACHE.get(key)
+        if ent is None:
+            return None
+        expires, status, ctype, data = ent
+        if time.time() > expires:
+            _EXACT_CACHE.pop(key, None)
+            return None
+        _EXACT_CACHE.move_to_end(key)
+        return status, ctype, data
+
+
+def _exact_put(key: str, status: int, ctype: str, data: bytes) -> None:
+    ttl = getattr(SETTINGS, "exact_cache_ttl_s", 300.0)
+    with _state_lock:
+        _EXACT_CACHE[key] = (time.time() + ttl, status, ctype, data)
+        _EXACT_CACHE.move_to_end(key)
+        while len(_EXACT_CACHE) > _EXACT_MAX:
+            _EXACT_CACHE.popitem(last=False)
 _monitors: "OrderedDict[str, SessionWasteMonitor]" = OrderedDict()
 
 _NOTIFY = os.getenv("ABEN_NOTIFY", "1") != "0"  # desktop toasts, on by default, set 0 for headless
@@ -300,8 +333,10 @@ def _work_overrides(headers) -> dict:
 
 
 def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, latency: float,
-             overrides: dict | None = None, response_api: bool = False) -> None:
-    """run a completed exchange through the edge pipeline. never raises into the request path."""
+             overrides: dict | None = None, response_api: bool = False,
+             compress_info: dict | None = None) -> None:
+    """run a completed exchange through the edge pipeline. never raises into the request path.
+    req_json is the request AS SENT (post-compression), so capture prices the real, smaller call."""
     try:
         from abenlux.attribution.attributor import extract_ticket
         event = build_event(provider=provider, request_body=req_json, response_raw=raw,
@@ -330,6 +365,15 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         )
         result.record.residency = getattr(SETTINGS, "residency", "eu")  # edge region for the residency wall
         result.record.tenant_id = getattr(SETTINGS, "tenant_id", "default")  # org unit / geography
+        if compress_info:  # token-savings facts from the edge compression layer (content-free counts)
+            result.record.saved_input_tokens = int(compress_info.get("saved", 0))
+            result.record.compression = compress_info.get("applied") or None
+            if compress_info.get("cached"):
+                # served from the local cache: no upstream call happened, so it cost nothing, and the
+                # whole input was avoided. the collector honors served_from_cache and does not re-price.
+                result.record.served_from_cache = True
+                result.record.cost_usd, result.record.cost_priced = 0.0, True
+                result.record.saved_input_tokens = result.record.input_tokens
         _sink.insert(result.record)  # forward to collector or write the shared store
         if _dev_store is not _store:  # solo mode already wrote via the sink's SqliteSink (same store)
             _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
@@ -356,6 +400,36 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
     if request.url.query:
         url = f"{url}?{request.url.query}"
     started = time.perf_counter()
+
+    # --- compression layer: rewrite the OUTBOUND request to save tokens. defensive - any failure keeps
+    # the original body, so compression can never break the developer's call. runs on every tool. ---
+    compress_info = {"saved": 0, "applied": "", "cached": False}
+    try:
+        from abenlux.compress import compress_request, enabled_strategies
+        strats = enabled_strategies(getattr(SETTINGS, "compress", None))
+        if strats and isinstance(req_json, dict):
+            cres = compress_request(req_json, provider.value, strats)
+            if cres.applied:
+                req_json = cres.body
+                body = json.dumps(cres.body).encode()
+                compress_info["saved"] = cres.saved_tokens
+                compress_info["applied"] = ",".join(cres.applied)
+    except Exception:
+        _log_capture_error("compress")
+
+    # --- exact-match cache: a byte-identical NON-STREAMED repeat is served locally, upstream call avoided
+    cache_key = (_exact_key(provider, body)
+                 if getattr(SETTINGS, "exact_cache", False) and not streamed else None)
+    if cache_key is not None:
+        hit = _exact_get(cache_key)
+        if hit is not None:
+            status, ctype, cbytes = hit
+            info = dict(compress_info, cached=True)
+
+            def after_hit() -> None:
+                _capture(provider, req_json, cbytes, False, 0.0, overrides, response_api, info)
+            return Response(content=cbytes, status_code=status, media_type=ctype,
+                            background=BackgroundTask(after_hit))
 
     # read timeout stays unbounded - a legitimate long agentic stream has minute-long gaps between SSE
     # chunks - but connect/write/pool are bounded so a dead or black-holed upstream is reaped instead of
@@ -402,7 +476,10 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         # off the request's hot path - the developer never waits on it.
         latency = (time.perf_counter() - started) * 1000
         body_bytes = _decode_body(bytes(captured), content_encoding) if not truncated["hit"] else bytes(captured)
-        _capture(provider, req_json, body_bytes, streamed, latency, overrides, response_api)
+        if cache_key is not None and not truncated["hit"] and upstream.status_code < 300:
+            _exact_put(cache_key, upstream.status_code,
+                       resp_headers.get("content-type") or "application/json", body_bytes)
+        _capture(provider, req_json, body_bytes, streamed, latency, overrides, response_api, compress_info)
 
     return StreamingResponse(
         tee(), status_code=upstream.status_code, headers=resp_headers,

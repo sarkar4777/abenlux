@@ -51,6 +51,7 @@ _COLUMNS = [
     "objective_id", "objective_label", "is_orphan",
     "attribution_method", "attribution_confidence",
     "ticket_id", "work_type", "work_type_source", "residency", "tenant_id",
+    "saved_input_tokens", "compression", "served_from_cache",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -68,7 +69,8 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           is_retry_loop {int_type}, retry_similarity {real_type},
           objective_id TEXT, objective_label TEXT, is_orphan {int_type},
           attribution_method TEXT, attribution_confidence {real_type},
-          ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT, tenant_id TEXT
+          ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT, tenant_id TEXT,
+          saved_input_tokens {int_type}, compression TEXT, served_from_cache {int_type}
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
@@ -81,7 +83,8 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
 def _coltypes(int_type: str, real_type: str) -> dict:
     # column -> sql type, used to add any missing columns when opening an older db
     ints = {"input_tokens", "output_tokens", "duplicate_history_tokens", "cache_read_tokens",
-            "cache_creation_tokens", "tokens_estimated", "cost_priced", "is_retry_loop", "is_orphan"}
+            "cache_creation_tokens", "tokens_estimated", "cost_priced", "is_retry_loop", "is_orphan",
+            "saved_input_tokens", "served_from_cache"}
     reals = {"ts", "cost_usd", "quality_score", "acceptance", "retry_similarity", "attribution_confidence"}
     out = {}
     for c in _COLUMNS:
@@ -101,6 +104,7 @@ def _values(r: DerivedRecord) -> tuple:
         r.objective_id, r.objective_label, int(r.is_orphan),
         r.attribution_method, r.attribution_confidence,
         r.ticket_id, r.work_type, r.work_type_source, r.residency, r.tenant_id,
+        r.saved_input_tokens, r.compression, int(r.served_from_cache),
     )
 
 

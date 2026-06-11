@@ -44,6 +44,15 @@ class Settings:
     # the tenant (org unit / geography) this edge belongs to. stamped on each derived record so the
     # collector can scope reports and benchmark tenants of the same org against each other.
     tenant_id: str = os.getenv("ABEN_TENANT", "default")
+    # which token-saving compressors the edge runs on the OUTBOUND request. unset -> the safe automatic
+    # defaults (lossless, behavior-safe). "off" -> none. "all" or a comma list -> opt in to the
+    # content-rewriting strategies (command_trim, otsl_tables, compress_json, slim_tools). one flag,
+    # applied to every tool at once because it lives at the gateway.
+    compress: str | None = os.getenv("ABEN_COMPRESS") or None
+    # exact-match request cache: short-circuit a byte-identical repeat request with the cached response
+    # (lossless, big win on retries/loops). on by default with a short TTL; ABEN_EXACT_CACHE=0 disables.
+    exact_cache: bool = os.getenv("ABEN_EXACT_CACHE", "1") != "0"
+    exact_cache_ttl_s: float = float(os.getenv("ABEN_EXACT_CACHE_TTL", "300"))
 
     @property
     def hmac_bytes(self) -> bytes:

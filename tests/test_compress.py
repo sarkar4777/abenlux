@@ -34,6 +34,32 @@ def test_prefix_stabilize_noop_when_prefix_is_already_stable():
     assert out.applied == [] and out.body == body
 
 
+def test_prefix_stabilize_leaves_a_mid_sentence_date_untouched():
+    # a real date inside prose must NOT be yanked out (that would mangle the prompt, not stabilize a cache)
+    body = _anthropic("The outage on 2024-01-15 was severe. Follow the house style.", "fix it")
+    out = compress_request(body, "anthropic", [strategies()["prefix_stabilize"]])
+    assert out.applied == [] and out.body == body          # nothing moved, prose intact
+
+
+def test_compression_skips_pathological_large_input_fast():
+    import time
+    # a backtracking-bait blob (many unclosed <table tags) must not stall: above the size cap the
+    # regex strategies leave it untouched.
+    blob = "<table " * 80000                                # ~640 KB, well over the cap
+    body = {"model": "claude-opus-4-8", "messages": [{"role": "user", "content": blob}]}
+    t0 = time.time()
+    out = compress_request(body, "anthropic", [strategies()["otsl_tables"], strategies()["compress_json"]])
+    assert (time.time() - t0) < 2.0                         # bounded, no quadratic blowup
+    assert "otsl_tables" not in out.applied                 # skipped, body unchanged
+
+
+def test_otsl_preserves_tables_with_merged_cells():
+    html = "<table><tr><th colspan=2>span</th></tr><tr><td>a</td><td>b</td></tr></table>"
+    body = {"model": "claude-opus-4-8", "messages": [{"role": "user", "content": html}]}
+    out = compress_request(body, "anthropic", [strategies()["otsl_tables"]])
+    assert "<table" in out.body["messages"][0]["content"]   # merged-cell table left intact, not transcoded
+
+
 def test_command_trim_strips_ansi_and_collapses_repeats():
     noisy = "\x1b[31mERROR\x1b[0m\n" + "\n".join(["retrying connection"] * 50) + "\ndone"
     body = {"model": "claude-opus-4-8", "messages": [{"role": "user", "content": noisy}]}

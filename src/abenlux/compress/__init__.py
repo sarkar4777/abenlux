@@ -45,7 +45,11 @@ _VOLATILE = re.compile(
     rf"(?i)(?:today(?:'s date)? is|current date(?:/time)?|the date is|now is|timestamp)\s*[:=]?\s*{_DATE}"
     rf"|{_DATE}|{_UUID}"
 )
-_HTML_TABLE = re.compile(r"<table\b.*?</table>", re.IGNORECASE | re.DOTALL)
+_HTML_TABLE = re.compile(r"<table\b[^>]*>.*?</table>", re.IGNORECASE | re.DOTALL)
+# regex-heavy strategies skip very large slots: a pathological prompt (e.g. many unclosed <table tags)
+# can drive a backtracking regex quadratic and stall the gateway event loop. above this size we leave
+# the text untouched - compression is best-effort and must never block a developer's call.
+_MAX_REGEX_INPUT = 200_000
 
 
 @dataclass
@@ -136,18 +140,28 @@ def _rewrite(body: dict, provider: str, roles: set[str], transform: Callable[[st
 
 # ----------------------------- strategies -----------------------------
 
+# an injected marker is ONLY moved when it leads the system text: either a known injection phrase
+# ("today is <date>", "timestamp: <date>", a leading request-id) or a bare date/uuid that stands alone
+# at the very top. matching mid-sentence dates is deliberately avoided so real prose is never mangled.
+_INJECTED_PREFIX = re.compile(
+    rf"^\s*(?:(?:today(?:'s date)? is|current date(?:/time)?|the date is|now is|timestamp|session|request(?:\s*id)?)"
+    rf"\s*[:=]?\s*)?(?:{_DATE}|{_UUID})\b[ \t]*[.\n;:]?",
+    re.IGNORECASE,
+)
+
+
 def _prefix_stabilize(body: dict, provider: str) -> Optional[dict]:
-    # move a volatile leading token (an injected date/time/uuid) OUT of the cache-stable prefix of the
-    # system text to its end, so the model's prompt cache can hit. lossless: same content, reordered.
+    # move a volatile LEADING token (an injected date/time/uuid at the very start) out of the cache-stable
+    # prefix to the end, so the model's prompt cache can hit. lossless: same content, reordered. only
+    # fires on a genuine leading marker - never a date embedded in real prose.
     def transform(text: str) -> str:
-        m = _VOLATILE.search(text)
-        if not m or m.start() > 400:                      # only when it sits near the top (the prefix)
+        m = _INJECTED_PREFIX.match(text)
+        if not m:
             return text
-        tok = m.group(0).strip()
-        rest = text[:m.start()] + text[m.end():]
-        rest = re.sub(r"^\s*[.,:;]?\s*", "", rest)         # drop a leading orphan separator
-        rest = re.sub(r"[ \t]{2,}", " ", rest).strip()
-        return f"{rest}\n\n{tok}" if rest else text
+        marker = m.group(0).strip()
+        rest = text[m.end():]
+        rest = re.sub(r"^[ \t]*[.,:;]?[ \t]*", "", rest).strip()
+        return f"{rest}\n\n{marker}" if rest else text
     return _rewrite(body, provider, {"system"}, transform)
 
 
@@ -177,7 +191,9 @@ def _otsl_table(html: str) -> str:
     # DocLang/OTSL-style compact table. faithful for simple tables (th/td rows); on anything unusual we
     # return the original so we never corrupt a complex table.
     try:
-        rows = re.findall(r"<tr\b.*?</tr>", html, re.IGNORECASE | re.DOTALL)
+        if re.search(r"\b(?:colspan|rowspan)\b", html, re.IGNORECASE):
+            return html        # merged cells carry structure OTSL pipe rows would drop - leave it
+        rows = re.findall(r"<tr\b[^>]*>.*?</tr>", html, re.IGNORECASE | re.DOTALL)
         if not rows:
             return html
         otsl: list[str] = ["<otsl>"]
@@ -195,7 +211,7 @@ def _otsl_table(html: str) -> str:
 def _otsl_tables(body: dict, provider: str) -> Optional[dict]:
     # DocLang-style: replace verbose HTML tables with compact OTSL. lossless for the cell contents.
     def transform(text: str) -> str:
-        if "<table" not in text.lower():
+        if len(text) > _MAX_REGEX_INPUT or "<table" not in text.lower():
             return text
         return _HTML_TABLE.sub(lambda m: _otsl_table(m.group(0)), text)
     return _rewrite(body, provider, {"user", "system"}, transform)
@@ -215,7 +231,7 @@ def _compress_json(body: dict, provider: str) -> Optional[dict]:
     pat = re.compile(r"```json\s*(.*?)```", re.DOTALL)
 
     def transform(text: str) -> str:
-        return pat.sub(minify, text) if "```json" in text else text
+        return pat.sub(minify, text) if ("```json" in text and len(text) <= _MAX_REGEX_INPUT) else text
     return _rewrite(body, provider, {"user", "system"}, transform)
 
 

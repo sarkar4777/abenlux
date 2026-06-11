@@ -21,3 +21,6 @@ CLAUDE.md
 
 # compression-e2e generated artifacts (regenerate by running compression_e2e.py)
 examples/compression-e2e/evidence/
+
+# local-only marketing draft (kept on disk, not published)
+examples/compression-e2e/LINKEDIN.md

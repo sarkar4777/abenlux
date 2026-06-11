@@ -129,6 +129,9 @@ async def health():
 _DERIVED_FIELDS = set(DerivedRecord.__dataclass_fields__.keys())
 
 
+_TOKEN_CAP = int(os.getenv("ABEN_TOKEN_CAP", "100000000"))   # clamp forged/absurd token counts on ingest
+
+
 def _harden_inbound(rec: DerivedRecord) -> None:
     """the edge is on the developer's machine, so a buggy or hostile one could forge a record. the
     collector is the authoritative source of spend: re-derive cost from the (content-free) token facts
@@ -136,12 +139,21 @@ def _harden_inbound(rec: DerivedRecord) -> None:
     total). also re-redact the free-text metadata fields as defense in depth - they should be slugs."""
     from abenlux.pricing import cost_usd
     from abenlux.processing.redact import redact
-    if getattr(rec, "served_from_cache", False):
-        rec.cost_usd, rec.cost_priced = 0.0, True   # a local-cache hit made no upstream call, so it cost nothing
-    else:
-        cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
-                      cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
-        rec.cost_usd, rec.cost_priced = cb.total, cb.priced
+    # clamp every token fact to a sane non-negative bound first, so a forged record cannot drive pricing
+    # with negative or absurd values, nor corrupt org-wide token/savings totals.
+    for f in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+              "duplicate_history_tokens", "saved_input_tokens"):
+        try:
+            v = int(getattr(rec, f, 0) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        setattr(rec, f, max(0, min(v, _TOKEN_CAP)))
+    # ALWAYS re-derive cost from the clamped tokens. a genuine local-cache hit carries zero billable
+    # tokens (the edge moved the avoided input into saved_input_tokens), so it prices to $0 with no
+    # trusted flag - which is why served_from_cache can no longer be abused to zero a real call's cost.
+    cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
+                  cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
+    rec.cost_usd, rec.cost_priced = cb.total, cb.priced
     for f in ("repo", "objective_label", "ticket_id", "work_type", "tool"):
         v = getattr(rec, f, None)
         if isinstance(v, str) and v:

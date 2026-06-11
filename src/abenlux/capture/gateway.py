@@ -379,11 +379,17 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
             if ps:
                 result.record.compression_detail = json.dumps(ps)
             if compress_info.get("cached"):
-                # served from the local cache: no upstream call happened, so it cost nothing, and the
-                # whole input was avoided. the collector honors served_from_cache and does not re-price.
+                # served from the local cache: no upstream call happened, so NOTHING was billed. report
+                # zero billable tokens (the collector re-prices from tokens, so this costs $0 without a
+                # trusted flag - a hostile edge cannot deflate a real call just by setting the flag) and
+                # carry the avoided input as savings.
                 result.record.served_from_cache = True
-                result.record.cost_usd, result.record.cost_priced = 0.0, True
                 result.record.saved_input_tokens = result.record.input_tokens
+                result.record.input_tokens = 0
+                result.record.output_tokens = 0
+                result.record.cache_read_tokens = 0
+                result.record.cache_creation_tokens = 0
+                result.record.cost_usd, result.record.cost_priced = 0.0, True
         _sink.insert(result.record)  # forward to collector or write the shared store
         if _dev_store is not _store:  # solo mode already wrote via the sink's SqliteSink (same store)
             _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph

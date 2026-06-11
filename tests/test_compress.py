@@ -174,12 +174,36 @@ def test_report_surfaces_compression_yield(tmp_path):
     s.close()
 
 
-def test_collector_does_not_reprice_a_cache_hit():
-    # a local-cache hit made no upstream call, so the collector must keep its cost at 0, not re-price it
+def test_collector_prices_a_cache_hit_at_zero_billable_tokens():
+    # a real local-cache hit carries ZERO billable tokens (the edge moved the avoided input into
+    # saved_input_tokens), so it re-prices to $0 from the tokens, with no trusted flag.
     from abenlux.api.server import _harden_inbound
     from abenlux.schema import DerivedRecord
     rec = DerivedRecord(event_id="c", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
-                        request_model="claude-opus-4-8", input_tokens=1000, output_tokens=100,
+                        request_model="claude-opus-4-8", input_tokens=0, output_tokens=0,
+                        duplicate_history_tokens=0, saved_input_tokens=1000, served_from_cache=True)
+    _harden_inbound(rec)
+    assert rec.cost_usd == 0.0 and rec.cost_priced and rec.saved_input_tokens == 1000
+
+
+def test_served_from_cache_flag_cannot_deflate_a_real_call():
+    # the deflation attack: a hostile edge marks a real expensive call served_from_cache to hide its
+    # cost. the collector re-prices from the real tokens regardless, so the spend is NOT zeroed.
+    from abenlux.api.server import _harden_inbound
+    from abenlux.schema import DerivedRecord
+    rec = DerivedRecord(event_id="d", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                        request_model="claude-opus-4-8", input_tokens=2_000_000, output_tokens=200_000,
                         duplicate_history_tokens=0, cost_usd=0.0, cost_priced=True, served_from_cache=True)
     _harden_inbound(rec)
-    assert rec.cost_usd == 0.0 and rec.cost_priced   # not re-priced to a real cost
+    assert rec.cost_usd > 0.0   # the real 2M-token call is priced, not hidden
+
+
+def test_ingest_clamps_negative_and_absurd_token_counts():
+    from abenlux.api.server import _harden_inbound
+    from abenlux.schema import DerivedRecord
+    rec = DerivedRecord(event_id="n", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                        request_model="claude-opus-4-8", input_tokens=-5, output_tokens=10**18,
+                        duplicate_history_tokens=0, saved_input_tokens=-99)
+    _harden_inbound(rec)
+    assert rec.input_tokens == 0 and rec.output_tokens <= 100_000_000 and rec.saved_input_tokens == 0
+    assert rec.cost_usd >= 0.0

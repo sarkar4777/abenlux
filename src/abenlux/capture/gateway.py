@@ -236,6 +236,41 @@ def _monitor_for(actor: str) -> SessionWasteMonitor:
     return mon
 
 
+def _decode_body(data: bytes, content_encoding: str) -> bytes:
+    # decompress a captured response body by its Content-Encoding so the parsers see plain JSON/SSE.
+    # best effort: an unknown or unavailable codec (e.g. brotli without the lib) returns the raw bytes,
+    # and capture then fails loudly for that one call rather than corrupting anything.
+    enc = (content_encoding or "").lower()
+    try:
+        if "gzip" in enc or "x-gzip" in enc:
+            import gzip
+            return gzip.decompress(data)
+        if "deflate" in enc:
+            import zlib
+            try:
+                return zlib.decompress(data)
+            except zlib.error:
+                return zlib.decompress(data, -zlib.MAX_WBITS)   # raw deflate (no zlib header)
+        if "br" in enc:
+            import brotli                                       # optional; httpx[brotli] provides it
+            return brotli.decompress(data)
+    except Exception:
+        return data
+    return data
+
+
+def _forward_headers(headers) -> dict:
+    # headers relayed to the upstream: drop hop-by-hop, and force an UNCOMPRESSED response. we tee the
+    # raw response bytes for capture, so a gzip/br body would be unparseable (and httpx adds
+    # Accept-Encoding: gzip by default). the tool still gets a correct identity-encoded body. real
+    # providers compress by default, so without this every real capture silently fails while the
+    # passthrough looks fine - which is exactly what a mock upstream hides.
+    fwd = {k: v for k, v in headers.items()
+           if k.lower() not in _HOP_BY_HOP and k.lower() != "accept-encoding"}
+    fwd["accept-encoding"] = "identity"
+    return fwd
+
+
 def _work_overrides(headers) -> dict:
     # a tool wrapper / desktop agent can tag each call with work-context via X-Aben-* headers,
     # so one agent can attribute calls from different workspaces without restarting.
@@ -297,7 +332,7 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
     query = request.url.query or ""
     streamed = bool(req_json.get("stream")) or "streamGenerateContent" in path or "alt=sse" in query
     overrides = _work_overrides(request.headers)
-    fwd = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    fwd = _forward_headers(request.headers)
     url = f"{upstream or _UPSTREAMS[provider]}{path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"
@@ -319,6 +354,10 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         return JSONResponse(status_code=code, content={
             "error": {"type": "upstream_unreachable", "message": "abenlux gateway could not reach the model upstream"}})
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
+    # the upstream may compress the body regardless of our Accept-Encoding (a CDN in front of the
+    # provider often does). we tee the RAW bytes, so capture must decompress by Content-Encoding before
+    # parsing - else json.loads chokes on gzip and every real capture silently fails.
+    content_encoding = upstream.headers.get("content-encoding", "")
     captured = bytearray()
     truncated = {"hit": False}
 
@@ -343,7 +382,8 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         # this is reliable (unlike a generator finally under ASGI) and keeps capture entirely
         # off the request's hot path - the developer never waits on it.
         latency = (time.perf_counter() - started) * 1000
-        _capture(provider, req_json, bytes(captured), streamed, latency, overrides, response_api)
+        body_bytes = _decode_body(bytes(captured), content_encoding) if not truncated["hit"] else bytes(captured)
+        _capture(provider, req_json, body_bytes, streamed, latency, overrides, response_api)
 
     return StreamingResponse(
         tee(), status_code=upstream.status_code, headers=resp_headers,

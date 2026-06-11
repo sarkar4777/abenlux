@@ -1,0 +1,10 @@
+# Company knowledge graph for the multi-developer real-model E2E. Objective attribution is by ticket
+# prefix; budgets + clients drive the budget guardrail and the Chinese wall.
+objectives:
+  - {id: obj-acme,   label: "Acme - Checkout Platform", kind: client, client: acme, monthly_budget_usd: 50}
+  - {id: obj-zenith, label: "Zenith - Mobile App",      kind: innovation, monthly_budget_usd: 30}
+  - {id: obj-globex, label: "Globex - Agent R&D",       kind: innovation, monthly_budget_usd: 0.0001}
+ticket_prefix_to_objective:
+  ACME: obj-acme
+  MOB: obj-zenith
+  GLX: obj-globex

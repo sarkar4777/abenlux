@@ -9,7 +9,7 @@ overruns before they happen, and keep developers private from management — acr
 coding tool. It even learns your team's intent vocabulary so it gets smarter and cheaper over time.**
 
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![tests](https://img.shields.io/badge/tests-248%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
@@ -377,4 +377,4 @@ make lint       # ruff (incl. no-semicolon style)
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

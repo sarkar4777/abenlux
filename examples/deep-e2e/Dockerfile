@@ -12,6 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 WORKDIR /work
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir -e . && pip install --no-cache-dir uvicorn httpx pyyaml
+RUN pip install --no-cache-dir -e .
 COPY examples/deep-e2e/deep_e2e.py ./deep_e2e.py
 CMD ["python", "-u", "deep_e2e.py"]

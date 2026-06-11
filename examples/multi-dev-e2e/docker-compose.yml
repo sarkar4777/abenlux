@@ -1,0 +1,125 @@
+# Multi-container, multi-developer, real-model end-to-end. A realistic distributed topology:
+#   - one central COLLECTOR container (RBAC, k-anon, reuse-yield ledger, benchmark, broker)
+#   - one EDGE GATEWAY container PER TENANT (acme-eu/us/apac/tiny + globex-eu), each stamping its own
+#     tenant_id/residency and forwarding only content-free DerivedRecords to the collector
+#   - a MOCK upstream container (used when no real key is provided)
+#   - a DRIVER container that drives ~23 developers through multi-turn model calls and asserts every
+#     role's view, then prints a real model-usage summary
+#
+# Real models: set ABEN_REAL=1 and provide the matching key + upstream on the host, e.g.
+#   ABEN_REAL=1 ANTHROPIC_API_KEY=sk-ant-... ABEN_UPSTREAM=https://api.anthropic.com \
+#   ABEN_MODEL=claude-haiku-4-5 docker compose -f examples/multi-dev-e2e/docker-compose.yml up \
+#     --build --abort-on-container-exit --exit-code-from driver
+# Without ABEN_REAL the gateways point at the mock upstream (no tokens spent, topology still real).
+
+x-image: &image
+  build:
+    context: ../..
+    dockerfile: examples/multi-dev-e2e/Dockerfile
+
+x-common-env: &common-env
+  ABEN_HMAC_KEY: ${ABEN_HMAC_KEY:-multi-dev-e2e-hmac-secret}
+  ABEN_INGEST_TOKEN: ${ABEN_INGEST_TOKEN:-multi-dev-ingest-token}
+  ABEN_KG: /config/kg.yaml
+  ABEN_K_ANON: "5"
+  ABEN_NOTIFY: "0"
+  ABEN_DEBUG: ${ABEN_DEBUG:-}
+  PYTHONUNBUFFERED: "1"
+
+x-gateway-env: &gateway-env
+  <<: *common-env
+  ABEN_COLLECTOR_URL: http://collector:8090
+  # real upstream when ABEN_UPSTREAM is set on the host, otherwise the mock service
+  ABEN_ANTHROPIC_UPSTREAM: ${ABEN_UPSTREAM:-http://mock:9111}
+  ABEN_OPENAI_UPSTREAM: ${ABEN_OPENAI_UPSTREAM:-http://mock:9111}
+  ABEN_GOOGLE_UPSTREAM: ${ABEN_GOOGLE_UPSTREAM:-http://mock:9111}
+
+services:
+  mock:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.devtools.mock_upstream:app", "--host", "0.0.0.0", "--port", "9111"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9111/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  collector:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.api.server:app", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      <<: *common-env
+      ABEN_PRINCIPALS: /config/principals.yaml
+      # /tmp is container-ephemeral on purpose: every fresh `up` starts the collector with a clean
+      # store, so consents/matches/spend from a prior run never leak into the next.
+      ABEN_DB: /tmp/central.db
+      ABEN_LEDGER_DB: /tmp/ledger.db
+      ABEN_TENANT_DB: /tmp/tenants.db
+      ABEN_MATCH_DB: /tmp/matches.db
+      ABEN_CONTACT_DB: /tmp/contacts.db
+    volumes:
+      - ./config:/config:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gw-acme-eu:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-eu,   ABEN_RESIDENCY: eu,   ABEN_DB: /tmp/edge.db, ABEN_LOCAL_DB: /tmp/local.db, ABEN_MATCH_DB: /tmp/m.db}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}, mock: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 30}
+
+  gw-acme-us:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-us,   ABEN_RESIDENCY: us,   ABEN_DB: /tmp/edge.db, ABEN_LOCAL_DB: /tmp/local.db, ABEN_MATCH_DB: /tmp/m.db}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}, mock: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 30}
+
+  gw-acme-apac:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-apac, ABEN_RESIDENCY: apac, ABEN_DB: /tmp/edge.db, ABEN_LOCAL_DB: /tmp/local.db, ABEN_MATCH_DB: /tmp/m.db}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}, mock: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 30}
+
+  gw-acme-tiny:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-tiny, ABEN_RESIDENCY: eu,   ABEN_DB: /tmp/edge.db, ABEN_LOCAL_DB: /tmp/local.db, ABEN_MATCH_DB: /tmp/m.db}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}, mock: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 30}
+
+  gw-globex-eu:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: globex-eu, ABEN_RESIDENCY: eu,   ABEN_DB: /tmp/edge.db, ABEN_LOCAL_DB: /tmp/local.db, ABEN_MATCH_DB: /tmp/m.db}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}, mock: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 30}
+
+  driver:
+    <<: *image
+    command: ["python", "-u", "driver.py"]
+    environment:
+      <<: *common-env
+      ABEN_REAL: ${ABEN_REAL:-0}
+      ABEN_MODEL: ${ABEN_MODEL:-claude-haiku-4-5}
+      ABEN_PROVIDER: ${ABEN_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      collector: {condition: service_healthy}
+      gw-acme-eu: {condition: service_healthy}
+      gw-acme-us: {condition: service_healthy}
+      gw-acme-apac: {condition: service_healthy}
+      gw-acme-tiny: {condition: service_healthy}
+      gw-globex-eu: {condition: service_healthy}

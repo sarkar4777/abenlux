@@ -1,0 +1,44 @@
+# Roles x tenants x orgs for the multi-developer E2E. subject == token so a developer's X-Aben-Actor
+# (the token) yields the same HMAC pseudonym the collector derives from the principal, i.e. their own
+# /api/me resolves to exactly the rows their real calls produced. In production this is SSO/OIDC.
+principals:
+  # org-level admins + finance
+  - {token: acme-admin,  subject: acme-admin,  role: admin,   tenant_id: acme-eu,   org: acme}
+  - {token: acme-fin,    subject: acme-fin,    role: finance, tenant_id: acme-eu,   org: acme}
+  - {token: globex-admin, subject: globex-admin, role: admin, tenant_id: globex-eu, org: globex}
+
+  # managers (one per tenant)
+  - {token: acme-eu-mgr,   subject: acme-eu-mgr,   role: manager, tenant_id: acme-eu,   org: acme}
+  - {token: acme-us-mgr,   subject: acme-us-mgr,   role: manager, tenant_id: acme-us,   org: acme}
+  - {token: acme-apac-mgr, subject: acme-apac-mgr, role: manager, tenant_id: acme-apac, org: acme}
+  - {token: acme-tiny-mgr, subject: acme-tiny-mgr, role: manager, tenant_id: acme-tiny, org: acme}
+  - {token: globex-eu-mgr, subject: globex-eu-mgr, role: manager, tenant_id: globex-eu, org: globex}
+
+  # developers - acme-eu (6)
+  - {token: acme-eu-dev0, subject: acme-eu-dev0, role: developer, tenant_id: acme-eu, org: acme, slack: "@acme-eu-dev0"}
+  - {token: acme-eu-dev1, subject: acme-eu-dev1, role: developer, tenant_id: acme-eu, org: acme, slack: "@acme-eu-dev1"}
+  - {token: acme-eu-dev2, subject: acme-eu-dev2, role: developer, tenant_id: acme-eu, org: acme}
+  - {token: acme-eu-dev3, subject: acme-eu-dev3, role: developer, tenant_id: acme-eu, org: acme}
+  - {token: acme-eu-dev4, subject: acme-eu-dev4, role: developer, tenant_id: acme-eu, org: acme}
+  - {token: acme-eu-dev5, subject: acme-eu-dev5, role: developer, tenant_id: acme-eu, org: acme}
+  # acme-us (5)
+  - {token: acme-us-dev0, subject: acme-us-dev0, role: developer, tenant_id: acme-us, org: acme}
+  - {token: acme-us-dev1, subject: acme-us-dev1, role: developer, tenant_id: acme-us, org: acme}
+  - {token: acme-us-dev2, subject: acme-us-dev2, role: developer, tenant_id: acme-us, org: acme}
+  - {token: acme-us-dev3, subject: acme-us-dev3, role: developer, tenant_id: acme-us, org: acme}
+  - {token: acme-us-dev4, subject: acme-us-dev4, role: developer, tenant_id: acme-us, org: acme}
+  # acme-apac (5)
+  - {token: acme-apac-dev0, subject: acme-apac-dev0, role: developer, tenant_id: acme-apac, org: acme}
+  - {token: acme-apac-dev1, subject: acme-apac-dev1, role: developer, tenant_id: acme-apac, org: acme}
+  - {token: acme-apac-dev2, subject: acme-apac-dev2, role: developer, tenant_id: acme-apac, org: acme}
+  - {token: acme-apac-dev3, subject: acme-apac-dev3, role: developer, tenant_id: acme-apac, org: acme}
+  - {token: acme-apac-dev4, subject: acme-apac-dev4, role: developer, tenant_id: acme-apac, org: acme}
+  # acme-tiny (2) - below k, exercises k-anon suppression
+  - {token: acme-tiny-dev0, subject: acme-tiny-dev0, role: developer, tenant_id: acme-tiny, org: acme}
+  - {token: acme-tiny-dev1, subject: acme-tiny-dev1, role: developer, tenant_id: acme-tiny, org: acme}
+  # globex-eu (5) - second org, exercises the org wall
+  - {token: globex-eu-dev0, subject: globex-eu-dev0, role: developer, tenant_id: globex-eu, org: globex}
+  - {token: globex-eu-dev1, subject: globex-eu-dev1, role: developer, tenant_id: globex-eu, org: globex}
+  - {token: globex-eu-dev2, subject: globex-eu-dev2, role: developer, tenant_id: globex-eu, org: globex}
+  - {token: globex-eu-dev3, subject: globex-eu-dev3, role: developer, tenant_id: globex-eu, org: globex}
+  - {token: globex-eu-dev4, subject: globex-eu-dev4, role: developer, tenant_id: globex-eu, org: globex}

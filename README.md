@@ -359,10 +359,15 @@ the edge agent redacts on the device and forwards only the content-free `Derived
 ## Save tokens automatically (the compression layer)
 
 <div align="center">
-<img src="docs/compression-before-after.png" alt="Before/after: 67% lower AI spend with the compression layer on" width="900">
-<br><em>Real before/after: the same 12-developer, multi-turn workload through the gateway, billed by
-the real model providers. Compression on cut input tokens 68% and cost 67% with no change to any tool.
+<img src="docs/compression-before-after.png" alt="Before/after: 59% lower AI spend with the compression layer on" width="900">
+<br><em>Real before/after: the same 24-developer, multi-turn workload through the gateway, billed by
+the real model providers. Compression on cut input tokens 61% and cost 59% with no change to any tool.
 Reproduce it from <a href="examples/compression-e2e/">examples/compression-e2e</a>.</em>
+<br><br>
+<img src="docs/compression-cli-before-after.png" alt="abenlux report, before and after compression" width="900">
+<br><em>The same result straight off the CLI: <code>abenlux report</code> for the uncompressed tenant
+(left) and the compressed one (right). The compression-yield block, attributed by strategy, appears
+only on the right, beside spend and reuse-yield.</em>
 </div>
 
 Because the edge agent is a loopback proxy, it can shrink the **outbound request** before it is

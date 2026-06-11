@@ -51,10 +51,12 @@ with the shape of your traffic.
 ## Screenshots
 
 ```
+python examples/compression-e2e/render_cli.py         # docs/compression-cli-before-after.png
 python examples/compression-e2e/render_screens.py     # docs/compression-before-after.png + compression-layer.png
 python examples/compression-e2e/render_dashboard.py   # docs/compression-dashboard.png + compression-developer.png
 ```
 
-`render_dashboard.py` boots a real collector against the snapshot in `evidence/` and screenshots the
-actual product dashboard, so the management (compression yield + per-strategy attribution) and
-developer (collaboration) views are genuine tool output, not mockups.
+`render_cli.py` runs the real `abenlux report` for both tenants and lays the two captured outputs side
+by side. `render_dashboard.py` boots a real collector against the snapshot in `evidence/` and
+screenshots the actual product dashboard, so the management (compression yield + per-strategy
+attribution) and developer (collaboration) views are genuine tool output, not mockups.

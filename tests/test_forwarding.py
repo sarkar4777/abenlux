@@ -132,3 +132,21 @@ def test_full_edge_to_collector_loop(tmp_path, monkeypatch):
     # the collector re-prices authoritatively from the (content-free) token facts and IGNORES the edge's
     # claimed cost_usd of 1.23 - opus 1000 input + 100 output is $0.0075/record, not $1.23
     assert round(by_obj["ObjA"]["cost"], 4) == round(0.0075 * 5, 4)
+
+
+def test_residency_for_prefers_registry_over_edge_supplied(monkeypatch):
+    # the residency wall must use the tenant registry, not a hostile edge's rec.residency
+    rec = DerivedRecord(event_id="r", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                        request_model="m", input_tokens=1, output_tokens=1, duplicate_history_tokens=0,
+                        tenant_id="acme-eu", residency="us")   # edge LIES residency=us
+    tenants = SimpleNamespace(get=lambda tid: SimpleNamespace(org="acme", residency="eu") if tid == "acme-eu" else None)
+    assert server._residency_for(rec, tenants, {}) == "eu"     # registry wins, edge value ignored
+    rec2 = DerivedRecord(event_id="r2", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="px",
+                         request_model="m", input_tokens=1, output_tokens=1, duplicate_history_tokens=0,
+                         tenant_id="unregistered", residency="apac")
+    assert server._residency_for(rec2, tenants, {}) == "apac"  # unregistered tenant falls back to edge
+
+
+def test_ingest_identity_index_disabled_without_principals(monkeypatch):
+    monkeypatch.delenv("ABEN_PRINCIPALS", raising=False)
+    assert server._ingest_identity_index() is None             # no per-actor binding in solo/default mode

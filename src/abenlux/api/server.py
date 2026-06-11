@@ -178,7 +178,8 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     mstore = _matches()
     ledger = _ledger()
     tenants = _tenants()
-    org_cache: dict[str, str] = {}     # tenant_id -> org, resolved once per batch (org wall in broker)
+    org_cache: dict[str, str] = {}     # tenant_id -> org/residency, resolved once per batch (broker walls)
+    identity = _ingest_identity_index()  # {pseudonym: Principal} or None (no per-actor binding configured)
     n, rejected = 0, 0
     for d in items:
         if not isinstance(d, dict):
@@ -188,9 +189,16 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
         clean = {k: v for k, v in d.items() if k in _DERIVED_FIELDS}
         try:
             rec = DerivedRecord(**clean)        # a malformed/mistyped item must not 500 the whole batch
+            if identity is not None:
+                principal = identity.get(rec.actor_pseudonym)
+                if principal is None:
+                    rejected += 1               # names an unknown actor: a forged/fabricated pseudonym
+                    continue
+                rec.tenant_id = principal.tenant_id   # bind tenant to the authenticated developer
             _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
             store.insert(rec)
-            _match_centrally(rec, mstore, ledger, _org_for(rec, tenants, org_cache))
+            _match_centrally(rec, mstore, ledger, _org_for(rec, tenants, org_cache),
+                             _residency_for(rec, tenants, org_cache))
         except Exception:
             rejected += 1
             continue
@@ -200,6 +208,30 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     mstore.close()
     store.close()
     return {"ingested": n, "rejected": rejected}
+
+
+def _ingest_identity_index():
+    """{pseudonym: Principal} for binding an ingested record to a known developer. ONLY enforced when a
+    real principals registry is configured (production). without it (offline/solo) the device is the
+    trust boundary and no per-actor binding is possible. the index lets the collector reject records
+    that name an unknown actor (fabricated pseudonyms that would dilute k-anonymity or poison a feed)
+    and stamp the record's tenant from the authenticated principal so a forged tenant_id cannot move
+    spend into another tenant."""
+    if not os.getenv("ABEN_PRINCIPALS"):
+        return None
+    return {p.pseudonym: p for p in _principals._by_token.values()}
+
+
+def _residency_for(rec: DerivedRecord, tenants, cache: dict) -> str:
+    # the residency wall must use the tenant registry's AUTHORITATIVE residency, not the edge-supplied
+    # rec.residency (a hostile edge could claim any region to cross the wall). an unregistered tenant has
+    # no registry entry, so it falls back to the edge value (it is already isolated in its own org bucket).
+    tenant = getattr(rec, "tenant_id", None) or "default"
+    key = f"res:{tenant}"
+    if key not in cache:
+        t = tenants.get(tenant)
+        cache[key] = t.residency if t is not None else (getattr(rec, "residency", None) or "eu")
+    return cache[key]
 
 
 def _org_for(rec: DerivedRecord, tenants, cache: dict) -> str:
@@ -229,7 +261,8 @@ def _valid_embedding(emb) -> bool:
     return norm > 0.0
 
 
-def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: str = "default") -> None:
+def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: str = "default",
+                     residency: str = "eu") -> None:
     # double-blind matching at the collector over content-free signals. writes one row per side,
     # each owner sees only their own. management never sees this - it is not a report.
     if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
@@ -241,7 +274,7 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: s
     sig = TopicSignal(
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
         topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
-        residency=getattr(rec, "residency", None) or "eu",  # enforce the residency wall centrally
+        residency=residency,                                # registry-authoritative, not edge-supplied
         org=org,                                            # enforce the org wall centrally
         # only a KG-RESOLVED objective is a trusted same-objective key (None for an unknown/forged id,
         # which then needs the stricter cross-objective bar instead of the spoofable label).

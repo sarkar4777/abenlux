@@ -115,17 +115,34 @@ def cmd_agent(args) -> None:
     from abenlux.agent import service
     action = getattr(args, "action", "status") or "status"
     if action == "run":
-        # load the snapshotted config into the environment, then start the gateway in a CHILD process.
-        # Settings reads the environment once at import, and this module already imported it - so the
-        # gateway must be (re-)imported in a fresh process for agent.env to actually take effect.
+        # load the snapshotted config into the environment, then SUPERVISE the gateway in a CHILD
+        # process. Settings reads the environment once at import, so the gateway must be (re-)imported in
+        # a fresh process for agent.env to take effect. the supervisor restarts the child on a crash with
+        # capped backoff and logs each exit - this gives Windows the restart-on-failure its Startup-folder
+        # launcher lacks (systemd/launchd already restart on Linux/macOS; the loop is harmless there).
         import os
         import subprocess
         import sys
+        import time
         n = service.load_env_file()
-        print(f"abenlux agent: loaded {n} config vars from {service.ENV_FILE}, starting capture on :{args.port}")
-        raise SystemExit(subprocess.run(
-            [sys.executable, "-m", "abenlux.cli", "gateway", "--port", str(args.port)],
-            env=os.environ.copy()).returncode)
+        print(f"abenlux agent: loaded {n} config vars from {service.ENV_FILE}, supervising capture on :{args.port}")
+        backoff = 2.0
+        while True:
+            started = time.monotonic()
+            try:
+                rc = subprocess.run(
+                    [sys.executable, "-m", "abenlux.cli", "gateway", "--port", str(args.port)],
+                    env=os.environ.copy()).returncode
+            except KeyboardInterrupt:
+                raise SystemExit(0)              # clean stop, do not restart
+            if rc == 0:
+                raise SystemExit(0)              # gateway was asked to stop
+            service.log_agent_crash(rc, args.port)
+            ran = time.monotonic() - started
+            backoff = 2.0 if ran > 60 else min(backoff * 2, 60.0)  # reset if it ran a while, else back off
+            print(f"abenlux agent: capture exited ({rc}); restarting in {int(backoff)}s "
+                  f"(see {service.AGENT_LOG})", file=sys.stderr)
+            time.sleep(backoff)
     elif action == "install":
         print(service.install(args.port))
         print(" config snapshot:", service.ENV_FILE, "(edit it and re-run `abenlux agent install` to update)")

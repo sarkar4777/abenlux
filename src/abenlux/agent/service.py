@@ -212,10 +212,40 @@ def install(port: int = 8088) -> str:
     return f"unsupported platform: {sysname}"
 
 
+AGENT_LOG = _DIR / "agent.log"
+
+
+def agent_alive(port: int = 8088) -> bool:
+    # actually probe the capture process, not just whether the install artifact exists. Windows has no
+    # service manager reporting liveness, so the install-state alone can read 'installed' while the
+    # agent died at launch (bad port / bad config) - this catches that.
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1.5) as r:  # noqa: S310
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def log_agent_crash(returncode: int, port: int) -> None:
+    # append a timestamped crash line so a silently-restarting agent is diagnosable (esp. on Windows,
+    # whose fire-and-forget launcher has no console to surface the error).
+    from datetime import datetime, timezone
+    try:
+        _DIR.mkdir(parents=True, exist_ok=True)
+        with open(AGENT_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now(timezone.utc).isoformat()} gateway exited rc={returncode} port={port}\n")
+    except Exception:
+        pass
+
+
 def status() -> str:
     sysname = platform.system()
-    return {"Linux": _status_linux, "Darwin": _status_macos, "Windows": _status_windows}.get(
+    base = {"Linux": _status_linux, "Darwin": _status_macos, "Windows": _status_windows}.get(
         sysname, lambda: f"unsupported platform: {sysname}")()
+    port = int(os.getenv("ABEN_AGENT_PORT", "8088"))
+    live = "running (health OK)" if agent_alive(port) else f"NOT responding on :{port}"
+    return f"{base}\n capture process: {live}"
 
 
 def uninstall() -> str:

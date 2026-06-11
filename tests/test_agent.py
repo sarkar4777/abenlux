@@ -75,7 +75,9 @@ def test_windows_login_launcher(sandbox, monkeypatch):
     assert "WScript.Shell" in txt and "agent run" in txt and "--port 8088" in txt
     assert ", 0, False" in txt                       # hidden window, non-blocking
     assert "AUMID" in msg
-    assert service.status() == "login launcher: installed"
+    st = service.status()
+    assert "login launcher: installed" in st          # install artifact present
+    assert "capture process:" in st                    # status also probes actual liveness (not just the file)
     service.uninstall()
     assert not vbs.exists()
 

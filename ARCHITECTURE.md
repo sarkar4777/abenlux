@@ -108,6 +108,29 @@ the real CLIs.
    verified by `test_rbac` + `test_api` (developer → 403 on `/api/report`; `/api/me` returns only the
    caller's rows).
 
+## The collector is the authoritative trust boundary
+
+The edge runs on the developer's machine, so a buggy or hostile one could forge a record. The collector
+therefore treats the edge as semi-trusted and re-derives or validates every authoritative fact on
+`/v1/derived` rather than believing the wire:
+
+- **Cost is re-priced from clamped token facts**, never the caller's `cost_usd`. Token counts are
+  clamped to a non-negative bound, and a local-cache hit carries **zero billable tokens** (the avoided
+  input rides on `saved_input_tokens`), so it prices to $0 without a trusted flag - a `served_from_cache`
+  flag can no longer zero a real call's cost.
+- **Identity is bound to a known principal.** When a principals registry is configured, a record naming
+  an unknown `actor_pseudonym` is rejected (no fabricated-actor k-anonymity dilution or feed poisoning),
+  and `tenant_id` is stamped from the authenticated principal so a forged tenant cannot move spend.
+- **The org and residency walls come from the tenant registry**, not the edge-supplied values, and the
+  request body is size-bounded before parsing.
+- **DP noise is deterministic per query** (HMAC-seeded, keyed per tenant/metric), so repeated benchmark
+  or report calls cannot be averaged to cancel the noise and recover a raw figure.
+
+This boundary is exercised adversarially by `examples/attack-e2e`, a Dockerized multi-tenant harness
+that seeds real Anthropic, OpenAI and Gemini traffic across two orgs and then attacks auth, RBAC,
+tenancy, the privacy boundary, cost integrity, identity binding, k-anonymity, the compression layer,
+the exact cache and the collaboration org wall.
+
 ## The edge pipeline, step by step
 
 `pipeline.process` is the heart of the system and the privacy boundary. Each numbered step in the
@@ -258,7 +281,7 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **278 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **293 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full

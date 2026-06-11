@@ -288,14 +288,17 @@ def _surface_to_developer(result, event) -> None:
 
 
 def _monitor_for(actor: str) -> SessionWasteMonitor:
-    mon = _monitors.get(actor)
-    if mon is None:
-        mon = SessionWasteMonitor()
-        _monitors[actor] = mon
-        while len(_monitors) > _MAX_MONITORS:
-            _monitors.popitem(last=False)
-    _monitors.move_to_end(actor)
-    return mon
+    # capture runs concurrently from many background tasks: the LRU get/insert/evict must be atomic or
+    # the OrderedDict corrupts and a session's waste history splits across two monitors.
+    with _state_lock:
+        mon = _monitors.get(actor)
+        if mon is None:
+            mon = SessionWasteMonitor()
+            _monitors[actor] = mon
+            while len(_monitors) > _MAX_MONITORS:
+                _monitors.popitem(last=False)
+        _monitors.move_to_end(actor)
+        return mon
 
 
 # cap on DECOMPRESSED capture bytes: a small compressed body can expand to gigabytes (a zip bomb), so

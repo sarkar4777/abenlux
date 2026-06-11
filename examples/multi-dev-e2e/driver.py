@@ -141,7 +141,7 @@ def wait_forwarded():
     last = -1
     for _ in range(30):
         time.sleep(2.0)
-        n = httpx.get(f"{COLLECTOR}/health", timeout=10.0).json().get("events", 0)
+        n = httpx.get(f"{COLLECTOR}/health", timeout=10.0, headers={"Authorization": f"Bearer {INGEST}"}).json().get("events", 0)
         if n == last and n > 0:
             break
         last = n

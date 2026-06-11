@@ -17,6 +17,7 @@ beyond the in-flight compare and never persisted.
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -76,16 +77,19 @@ class SessionHistoryTracker:
 
     def __post_init__(self) -> None:
         self._prev = OrderedDict()
+        self._lock = threading.Lock()
 
     def duplicate_history_tokens(self, session_key: str, messages: list) -> int:
-        prev = self._prev.get(session_key)
-        dup = 0
-        if prev:
-            dup = estimate_tokens_from_chars(unchanged_prefix_chars(prev, messages))
-        self._prev[session_key] = [_fingerprint(m) for m in messages]  # fingerprints only, no raw text
-        self._prev.move_to_end(session_key)
-        while len(self._prev) > self.max_sessions:
-            self._prev.popitem(last=False)  # evict oldest
+        # the gateway captures concurrently from many threads; the OrderedDict get/move/evict must be
+        # atomic or it corrupts and splits a session's resent-history baseline.
+        fp = [_fingerprint(m) for m in messages]  # fingerprints only, no raw text
+        with self._lock:
+            prev = self._prev.get(session_key)
+            dup = estimate_tokens_from_chars(unchanged_prefix_chars(prev, messages)) if prev else 0
+            self._prev[session_key] = fp
+            self._prev.move_to_end(session_key)
+            while len(self._prev) > self.max_sessions:
+                self._prev.popitem(last=False)  # evict oldest
         return dup
 
 

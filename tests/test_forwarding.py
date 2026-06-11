@@ -176,3 +176,11 @@ def test_ingest_rejects_oversized_body(monkeypatch):
             "duplicate_history_tokens": 0}]
     r = client.post("/v1/derived", json=big, headers={"Authorization": "Bearer dev-ingest-token"})
     assert r.status_code == 413                                            # bounded before JSON parse
+
+
+def test_health_event_count_requires_ingest_token():
+    client = TestClient(server.app)
+    pub = client.get("/health").json()
+    assert pub["status"] == "ok" and "events" not in pub          # public probe: no org-wide count
+    auth = client.get("/health", headers={"Authorization": "Bearer dev-ingest-token"}).json()
+    assert "events" in auth                                        # count only with a valid ingest token

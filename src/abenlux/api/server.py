@@ -117,7 +117,12 @@ async def _authz_handler(_request, exc: AuthorizationError):
 
 
 @app.get("/health")
-async def health():
+async def health(authorization: str | None = Header(default=None)):
+    # liveness is public, but the org-wide event COUNT is only returned to a holder of a valid ingest
+    # token (an operational signal, not for anonymous callers). edges/ops poll with their token.
+    token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
+    if token not in SETTINGS.ingest_tokens:
+        return {"status": "ok"}
     s = _store()
     out = {"status": "ok", "events": s.totals()["n"]}
     s.close()
@@ -172,6 +177,10 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
     if token not in SETTINGS.ingest_tokens:
         raise HTTPException(status_code=401, detail="invalid ingest token")
+    # the built-in default ingest token is a dev convenience; refuse it in a configured (production)
+    # posture so a deploy that forgot to set ABEN_INGEST_TOKEN cannot accept records from anyone.
+    if token == "dev-ingest-token" and os.getenv("ABEN_PRINCIPALS") and not os.getenv("ABEN_ALLOW_DEFAULT_INGEST"):
+        raise HTTPException(status_code=401, detail="default ingest token refused in this posture")
     # bound the body BEFORE parsing: request.json() would otherwise buffer an arbitrarily large payload
     # into memory (a cheap DoS) before the batch-size check below ever runs.
     raw = await request.body()
@@ -471,11 +480,18 @@ async def export(dimension: str = "objective", format: str = "csv", tenant: str 
         return {"dimension": dimension, "tenant": scope, "k": SETTINGS.k_anon, "rows": out}
     import csv
     import io
+
+    def _csv_cell(v):
+        # neutralize CSV/formula injection: a label beginning with =,+,-,@ (or a control char) is data,
+        # not a spreadsheet formula. prefix it so a downstream Excel/Sheets cannot execute it.
+        s = str(v)
+        return ("'" + s) if s[:1] in ("=", "+", "-", "@", "\t", "\r", "\n") else s
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["dimension", "label", "calls", "tokens", "cost_usd", "actors"])
     for r in out:
-        w.writerow([r["dimension"], r["label"], r["calls"], r["tokens"], r["cost_usd"], r["actors"]])
+        w.writerow([_csv_cell(r["dimension"]), _csv_cell(r["label"]), r["calls"], r["tokens"],
+                    r["cost_usd"], r["actors"]])
     from fastapi.responses import Response
     return Response(content=buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=abenlux-{dimension}-{scope}.csv"})

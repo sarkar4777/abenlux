@@ -43,6 +43,9 @@ class SqliteSink:
     def flush(self) -> None:  # parity with HttpSink
         pass
 
+    def stats(self) -> dict:
+        return {"mode": "local", "dropped": 0, "buffered": 0}
+
 
 def _default_post(url: str, batch: list[dict], token: str, timeout: float) -> bool:
     import httpx
@@ -135,6 +138,12 @@ class HttpSink:
                 while len(self._buf) > self.max_spool:
                     self._buf.popleft()
                     self.dropped += 1
+
+    def stats(self) -> dict:
+        # content-free delivery health for /health: how many records are buffered awaiting delivery,
+        # and how many the spool dropped under a sustained collector outage (otherwise invisible loss).
+        with self._lock:
+            return {"mode": "forward", "dropped": self.dropped, "buffered": len(self._buf)}
 
     def close(self) -> None:
         if getattr(self, "_stop", None):

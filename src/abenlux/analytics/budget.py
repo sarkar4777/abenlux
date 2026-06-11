@@ -54,12 +54,21 @@ def current_month_bounds(now: float | None = None) -> tuple[float, float, float]
     return start.timestamp(), end.timestamp(), now
 
 
-def _status(spent: float, budget: float, forecast: float) -> str:
+# the forecast-based at-risk signal is only trustworthy once enough of the period has elapsed. early on,
+# the run-rate projection (spent / fraction-elapsed, floored at 0.04 -> up to 25x) extrapolates a tiny
+# spend into an alarming forecast and cries wolf. so the forecast rule only fires past this fraction;
+# the spent-vs-budget rule (>= 80% already spent) still fires at any time, because that is real.
+_FORECAST_MIN_ELAPSED = 0.15
+
+
+def _status(spent: float, budget: float, forecast: float, elapsed: float = 1.0) -> str:
     if budget <= 0:
         return "ok"
     if spent >= budget:
         return "over"
-    if (spent / budget) >= _AT_RISK_PCT or forecast > budget * _FORECAST_OVER_MARGIN:
+    if (spent / budget) >= _AT_RISK_PCT:
+        return "at_risk"
+    if elapsed >= _FORECAST_MIN_ELAPSED and forecast > budget * _FORECAST_OVER_MARGIN:
         return "at_risk"
     return "ok"
 
@@ -86,7 +95,7 @@ def budget_status(
             spent_usd=round(spent, 4), pct=round(spent / budget, 4) if budget else 0.0,
             forecast_usd=round(forecast, 4),
             projected_overrun_usd=round(max(0.0, forecast - budget), 4),
-            status=_status(spent, budget, forecast), fraction_elapsed=round(elapsed, 4),
+            status=_status(spent, budget, forecast, elapsed), fraction_elapsed=round(elapsed, 4),
         ))
     out.sort(key=lambda b: b.pct, reverse=True)
     return out

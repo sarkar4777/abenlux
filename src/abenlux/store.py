@@ -257,6 +257,19 @@ class _BaseStore:
         )
         return cur.fetchone()[0] or 0.0
 
+    def objective_window_actors(self, objective_id: str, start_ts: float, end_ts: float,
+                                tenant: str | None = None) -> int:
+        # distinct developers on one objective WITHIN the budget period. the budget k-gate must use this
+        # (not all-time actors): an objective worked by many people historically but by only 1-2 THIS
+        # period would otherwise leak that period's near-individual spend through the budget line.
+        pred, params = self._tenant_pred(tenant)
+        cur = self._exec(
+            "SELECT COUNT(DISTINCT actor_pseudonym) FROM derived WHERE objective_id=? AND ts >= ? AND ts < ?"
+            + self._and(pred, "AND"),
+            (objective_id, start_ts, end_ts) + params,
+        )
+        return cur.fetchone()[0] or 0
+
     def actor_costs_for(self, objective_id: str, work_type: str | None,
                         tenant: str | None = None) -> list[float]:
         """per-actor total cost on one objective x work_type - the basis for the reuse-yield

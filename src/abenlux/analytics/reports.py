@@ -91,11 +91,11 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         from abenlux.analytics.budget import budget_status, current_month_bounds
         ps, pe, now = current_month_bounds()
         # k-anonymity also applies to budgets: an objective with 1-2 developers must not expose its
-        # spend/forecast here (it would bypass the gate that suppresses the same group in by_objective).
-        obj_actors = {r["label"]: r["actors"] for r in store.rollup("objective", tenant=tenant)}
+        # spend/forecast here. gate on PERIOD actors (not all-time) so an objective worked by many
+        # historically but by only 1-2 this period is still suppressed for the period's spend.
         for b in budget_status(store, kg, period_start=ps, period_end=pe, now=now, tenant=tenant):
             row = b.to_dict()
-            actors = obj_actors.get(b.label, 0)
+            actors = store.objective_window_actors(b.objective_id, ps, now + 1e-9, tenant=tenant)
             if 0 < actors < k:                          # sub-k and non-empty -> hide the spend figures
                 for f in ("spent_usd", "pct", "forecast_usd", "projected_overrun_usd"):
                     row[f] = None

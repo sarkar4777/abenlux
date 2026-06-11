@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections import OrderedDict
 
@@ -62,7 +63,10 @@ _sink = build_sink(SETTINGS, local_store=_store)  # local sqlite, or forward-to-
 _embed = get_embedder()
 _classifier = get_classifier()    # optional, tiny LLM intent fallback. None unless configured.
 _learner = WorkTypeLearner()      # self-learning work-type memory, on-device, hot-reloaded
-_dev_store = open_store(SETTINGS.local_db)  # the developer's own rows -> their personal knowledge graph
+# the developer's own rows -> their personal knowledge graph. in solo mode local_db == db_path, so
+# reuse the SAME store object: opening a second connection to one file double-writes every record and
+# pits two per-instance locks against each other for no benefit (forward mode keeps a separate file).
+_dev_store = _store if SETTINGS.local_db == SETTINGS.db_path else open_store(SETTINGS.local_db)
 # in-place upgrade that then adopts a named tenant: claim this device's pre-tenant (NULL) rows for it,
 # so its history isn't orphaned out of tenant-scoped reports. no-op for the default tenant.
 if getattr(SETTINGS, "tenant_id", "default") != "default":
@@ -85,12 +89,20 @@ _NOTIFY = os.getenv("ABEN_NOTIFY", "1") != "0"  # desktop toasts, on by default,
 _debounce = Debouncer()
 
 
+# content-free counters surfaced on /health so silent capture loss is observable. mutated from the
+# BackgroundTask threadpool, guarded by _state_lock (also used for the budget/collab TTL claims).
+_state_lock = threading.Lock()
+_capture_errors = {"n": 0}
+
+
 def _log_capture_error(where: str) -> None:
     # capture must never raise into the request path, but silently swallowing also hid a real bug
     # (a dropped Gemini stream) for a while. so we surface it: a one-liner always, full traceback on
-    # ABEN_DEBUG. capture failing should be visible, not invisible.
+    # ABEN_DEBUG, and a counter on /health. capture failing should be visible, not invisible.
     import sys
     import traceback
+    with _state_lock:
+        _capture_errors["n"] += 1
     if os.getenv("ABEN_DEBUG"):
         traceback.print_exc()
     else:
@@ -113,9 +125,13 @@ def _budget_snapshot() -> dict:
     """objective -> status, refreshed on a TTL. local compute in solo mode, poll the collector
     when forwarding (the edge agent has the device token). best-effort, never raises."""
     now = time.perf_counter()
-    if now - _budget_state["refreshed"] < _BUDGET_TTL:
-        return _budget_state["snapshot"]
-    _budget_state["refreshed"] = now
+    # claim the refresh atomically: under the lock, check the TTL and stamp it, so concurrent capture
+    # threads don't all stampede the collector at once when the TTL elapses (the network call is OUTSIDE
+    # the lock so it never serializes I/O).
+    with _state_lock:
+        if now - _budget_state["refreshed"] < _BUDGET_TTL:
+            return _budget_state["snapshot"]
+        _budget_state["refreshed"] = now
     try:
         if SETTINGS.collector_url:
             r = httpx.Client(timeout=3.0).get(
@@ -150,27 +166,29 @@ def _poll_collab_matches(pseudonym: str) -> list[dict]:
     if not SETTINGS.collector_url or not dev_token:
         return []
     now = time.perf_counter()
-    if now - _collab_state["refreshed"] < _COLLAB_TTL:
-        return []
-    _collab_state["refreshed"] = now
+    with _state_lock:                         # claim the TTL atomically (see _budget_snapshot)
+        if now - _collab_state["refreshed"] < _COLLAB_TTL:
+            return []
+        _collab_state["refreshed"] = now
     fresh: list[dict] = []
     try:
         r = httpx.Client(timeout=3.0).get(
             SETTINGS.collector_url.rstrip("/") + "/v1/collab-status",
             headers={"Authorization": f"Bearer {dev_token}"})
         if r.status_code == 200:
-            seen = _collab_state["seen"]
-            for m in r.json().get("matches", []):
-                if m.get("mutual"):           # already introduced, no need to nudge again
-                    continue
-                key = m.get("id")
-                if key in seen:
-                    continue
-                seen[key] = True
-                seen.move_to_end(key)
-                while len(seen) > 4096:
-                    seen.popitem(last=False)
-                fresh.append(m)
+            with _state_lock:                 # the dedup set is shared across capture threads
+                seen = _collab_state["seen"]
+                for m in r.json().get("matches", []):
+                    if m.get("mutual"):           # already introduced, no need to nudge again
+                        continue
+                    key = m.get("id")
+                    if key in seen:
+                        continue
+                    seen[key] = True
+                    seen.move_to_end(key)
+                    while len(seen) > 4096:
+                        seen.popitem(last=False)
+                    fresh.append(m)
     except Exception:
         pass
     return fresh
@@ -313,7 +331,8 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
         result.record.residency = getattr(SETTINGS, "residency", "eu")  # edge region for the residency wall
         result.record.tenant_id = getattr(SETTINGS, "tenant_id", "default")  # org unit / geography
         _sink.insert(result.record)  # forward to collector or write the shared store
-        _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
+        if _dev_store is not _store:  # solo mode already wrote via the sink's SqliteSink (same store)
+            _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
         _surface_to_developer(result, event)  # nudges + collab -> developer's private feed
     except Exception:
         _log_capture_error("_capture")
@@ -450,7 +469,8 @@ def _ingest_otlp(payload: dict) -> int:
             result.record.residency = getattr(SETTINGS, "residency", "eu")
             result.record.tenant_id = getattr(SETTINGS, "tenant_id", "default")
             _sink.insert(result.record)
-            _dev_store.insert(result.record)
+            if _dev_store is not _store:           # solo mode already wrote via the sink (same store)
+                _dev_store.insert(result.record)
             _surface_to_developer(result, event)  # same private feed, regardless of tool/tier
             n += 1
         except Exception:
@@ -488,6 +508,8 @@ async def otel_metrics(request: Request):
 @app.get("/health")
 async def health():
     forwarding = SETTINGS.collector_url is not None
+    with _state_lock:
+        capture_errors = _capture_errors["n"]
     out = {
         "status": "ok",
         "mode": "edge-forward" if forwarding else "local",
@@ -495,6 +517,9 @@ async def health():
         "objectives_loaded": len(_kg.objectives),
         "semantic_attribution": any(o.embedding for o in _kg.objectives.values()),
         "dev_key_warning": SETTINGS.using_dev_key,
+        # observability so silent loss is visible: capture failures + (forward mode) spool delivery
+        "capture_errors": capture_errors,
+        "sink": _sink.stats() if hasattr(_sink, "stats") else {},
     }
     if not forwarding:  # local mode has the figures on hand, forwarded mode lives on the collector
         t = _store.totals()

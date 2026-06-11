@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -49,11 +50,22 @@ class LocalSignalFeed:
         self.path = Path(path) if path else _default_path()
         self.max_entries = max_entries
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # the feed is written from the gateway's BackgroundTask threadpool (concurrent captures), so the
+        # append + read-modify-write trim must be serialized or a trim can drop a concurrently-appended
+        # line (and on Windows the 'w' reopen can collide with another thread's 'a' handle).
+        self._lock = threading.Lock()
+        self._appends = 0
+        # amortize the O(n) read-rewrite trim: run it every ~quarter-bound appends, capped so a huge
+        # bound doesn't defer trimming too long. the file stays bounded by max_entries + interval.
+        self._trim_interval = max(1, min(256, max_entries // 4 or 1))
 
     def append(self, entry: FeedEntry) -> None:
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(entry)) + "\n")
-        self._trim()
+        with self._lock:
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(asdict(entry)) + "\n")
+            self._appends += 1
+            if self._appends % self._trim_interval == 0:
+                self._trim()
 
     def append_waste(self, signal, *, tool: str | None = None, recoverable_usd: float = 0.0) -> None:
         self.append(FeedEntry(
@@ -91,8 +103,9 @@ class LocalSignalFeed:
     def recent(self, n: int = 20) -> list[dict]:
         if not self.path.exists():
             return []
-        with self.path.open("r", encoding="utf-8") as fh:
-            lines = fh.readlines()
+        with self._lock:
+            with self.path.open("r", encoding="utf-8") as fh:
+                lines = fh.readlines()
         out = []
         for ln in lines[-n:]:
             try:

@@ -102,8 +102,11 @@ def test_management_budgets_are_k_anonymity_gated(tmp_path):
     from abenlux.store import DerivedStore
     from abenlux.analytics.reports import management_report
     from abenlux.attribution.attributor import KnowledgeGraph, Objective
+    import time
     s = DerivedStore(str(tmp_path / "r.db"))
-    solo = DerivedRecord(event_id="e1", ts=0.0, tier="t", provider="p", actor_pseudonym="only-dev",
+    # ts within the current budget period so the period-scoped budget actually sees this spend (the
+    # k-gate now counts PERIOD actors, not all-time, so a record outside the month would net $0/0 actors)
+    solo = DerivedRecord(event_id="e1", ts=time.time(), tier="t", provider="p", actor_pseudonym="only-dev",
                          request_model="m", input_tokens=10, output_tokens=10, duplicate_history_tokens=0,
                          cost_usd=5.0, objective_id="obj-x", objective_label="Solo Objective", is_orphan=False)
     s.insert(solo)
@@ -129,3 +132,18 @@ def test_classifier_does_not_cache_a_transient_failure():
     clf = Flaky()
     assert worktype_llm._cached(clf, "phrase") is None        # transient failure, NOT cached
     assert worktype_llm._cached(clf, "phrase") == "feature"   # retried on the next call
+
+
+def test_budget_forecast_at_risk_needs_enough_period_elapsed():
+    # round-3: the floored run-rate forecast (up to 25x early on) wrongly tripped at_risk a few minutes
+    # into the period. the forecast rule must only fire past a min elapsed fraction; the spent rule still
+    # fires anytime.
+    from abenlux.analytics.budget import _status
+    # tiny spend, 2% into the period -> forecast extrapolates high, but it is too early to alarm
+    assert _status(spent=5.0, budget=100.0, forecast=250.0, elapsed=0.02) == "ok"
+    # same forecast once we are well into the period -> a real at-risk
+    assert _status(spent=40.0, budget=100.0, forecast=250.0, elapsed=0.5) == "at_risk"
+    # already spent >= 80% -> at_risk regardless of how early it is
+    assert _status(spent=85.0, budget=100.0, forecast=90.0, elapsed=0.01) == "at_risk"
+    # over budget is over, anytime
+    assert _status(spent=120.0, budget=100.0, forecast=120.0, elapsed=0.01) == "over"

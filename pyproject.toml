@@ -1,6 +1,6 @@
 [project]
 name = "abenlux"
-version = "0.2.0"
+version = "0.3.0"
 description = "Abenlux - AI spend -> value attribution plane. Capture, normalize, attribute and govern AI token usage across IDE/CLI tools."
 requires-python = ">=3.10"
 readme = "README.md"

@@ -302,20 +302,40 @@ async def set_contact(request: Request, principal: Principal = Depends(current_p
     return {"contact": saved}
 
 
+def _collector_orgs() -> set:
+    # every org the collector knows about, from the registry (and the default catch-all). used to
+    # detect a SHARED multi-org collector, where the 'default' tenant bucket would merge two companies.
+    tenants = _tenants()
+    try:
+        return {t.org for t in tenants.list()}
+    finally:
+        tenants.close()
+
+
 def _resolve_report_tenant(principal: Principal, requested: str | None) -> str:
     """a principal reports their OWN tenant by default. they may request another tenant only if it is
     in their own org (admins can manage any tenant in their org) - never another org's. cross-tenant
     DETAIL stays inside the org wall; cross-tenant COMPARISON is the k-anon benchmark, not this report."""
     if not requested or requested == principal.tenant_id:
-        return principal.tenant_id
-    tenants = _tenants()
-    try:
-        org = tenants.org_of(requested)
-    finally:
-        tenants.close()
-    if org is not None and org == principal.org:
-        return requested
-    raise HTTPException(status_code=403, detail="tenant is outside your org")
+        scope = principal.tenant_id
+    else:
+        tenants = _tenants()
+        try:
+            org = tenants.org_of(requested)
+        finally:
+            tenants.close()
+        if org is None or org != principal.org:
+            raise HTTPException(status_code=403, detail="tenant is outside your org")
+        scope = requested
+    # the 'default' tenant maps to NULL+'default' rows that carry NO org. on a collector that more than
+    # one org ingests into, that bucket would merge two companies' aggregates (and a sub-k slice would
+    # expose a rival's figures). refuse the default bucket there - register a tenant for your org first,
+    # exactly the honesty the benchmark cohort already enforces. single-org deployments are unaffected.
+    if scope == "default" and len(_collector_orgs() - {"default"}) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="this collector hosts multiple orgs; register and use a tenant for your org")
+    return scope
 
 
 @app.get("/api/report")
@@ -397,7 +417,7 @@ async def drift(tenant: str | None = None, principal: Principal = Depends(curren
     from abenlux.analytics.drift import spend_trend
     scope = _resolve_report_tenant(principal, tenant)  # never expose the org-wide cross-tenant trend
     store = _store()
-    rep = spend_trend(store, tenant=scope)
+    rep = spend_trend(store, tenant=scope, k=SETTINGS.k_anon)  # k-gate sub-k windows
     store.close()
     return {"trend": asdict(rep) if rep else None}
 

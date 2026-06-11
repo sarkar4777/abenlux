@@ -154,7 +154,7 @@ class LedgerStore:
     def _opportunities(self, tenant: str | None) -> list[tuple]:
         where, params = _tenant_where(tenant, self._ph)
         return self.conn.execute(
-            "SELECT tenant_id, objective_id, work_type, mode FROM avoided" + where, params
+            "SELECT tenant_id, objective_id, work_type, mode, dedup_key FROM avoided" + where, params
         ).fetchall()
 
     def summary(self, store, tenant: str | None = None, *, k: int = 5) -> dict:
@@ -162,31 +162,48 @@ class LedgerStore:
         and never depends on ingest order. an opportunity is credited only when its objective x
         work_type cost-to-solve is backed by >= k developers RIGHT NOW."""
         rows = self._opportunities(tenant)
-        # cache the per (tenant, objective, work_type) cost vector so we hit the store once per group
+        # group opportunities into CLUSTERS of (tenant, objective, work_type). within a cluster, the
+        # avoided re-solves is the number of distinct developers who could reuse instead of re-solve,
+        # which is at most (distinct participants - 1) - the first solver pays full cost, each later one
+        # avoids ONE re-solve. crediting per developer-PAIR instead would book C(n,2) and overstate the
+        # savings ~n/2x on popular work. a cluster is valued at the single higher mode (solved > live).
+        clusters: dict[tuple, dict] = {}
+        for tid, obj, wt, mode, dedup_key in rows:
+            scope = tid if tid is not None else "default"
+            ck = (scope, obj, wt)
+            c = clusters.setdefault(ck, {"actors": set(), "solved": False})
+            # dedup_key = tenant::a|b::objective::work_type - parse the pair to count distinct people
+            parts = dedup_key.split("::")
+            if len(parts) >= 2:
+                c["actors"].update(p for p in parts[1].split("|") if p)
+            if mode == "solved_reuse":
+                c["solved"] = True
+
         cohorts: dict[tuple, list[float]] = {}
         total = 0.0
         by_work_type: dict[str, float] = {}
         credited = suppressed = 0
-        for tid, obj, wt, mode in rows:
-            scope = tid if tid is not None else "default"
-            ck = (scope, obj, wt)
+        for ck, c in clusters.items():
+            scope, obj, wt = ck
             if ck not in cohorts:
                 # wt is the stored work_type ('unknown' for unclassified). actor_costs_for matches the
                 # unclassified bucket (NULL or 'unknown') uniformly, so it is never silently suppressed.
                 cohorts[ck] = store.actor_costs_for(obj, wt, tenant=scope)
             costs = cohorts[ck]
-            if len(costs) < k:                        # sub-k cost-to-solve -> never credited
+            avoided_solves = max(0, len(c["actors"]) - 1)   # n-1, not C(n,2)
+            if len(costs) < k or avoided_solves == 0:        # sub-k cost-to-solve -> never credited
                 suppressed += 1
                 continue
-            value = estimate_avoided(costs, mode)
+            mode = "solved_reuse" if c["solved"] else "live_duplication"
+            value = estimate_avoided(costs, mode) * avoided_solves
             total += value
             by_work_type[wt] = by_work_type.get(wt, 0.0) + value
-            credited += 1
+            credited += avoided_solves
         return {
             "tenant": tenant,
             "reuse_avoided_usd": round(total, 2),
-            "events_credited": credited,
-            "events_suppressed": suppressed,        # below k developers, not credited
+            "events_credited": credited,            # number of avoided re-solves credited (sum of n-1)
+            "events_suppressed": suppressed,        # clusters below k developers, not credited
             "by_work_type": [{"work_type": w, "avoided_usd": round(v, 2)}
                              for w, v in sorted(by_work_type.items(), key=lambda x: -x[1])],
             "k": k,

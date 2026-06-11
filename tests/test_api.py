@@ -116,9 +116,9 @@ def test_rollup_rejects_unknown_dimension(client):
 def test_drift_endpoint_gated_and_reports_trend(tmp_path, monkeypatch):
     db = str(tmp_path / "drift.db")
     s = DerivedStore(db)
-    for i in range(4):  # prior window: attributed
+    for i in range(5):  # prior window: attributed (>= k distinct devs so the window clears k-anon)
         s.insert(_rec(f"p{i}", f"d{i}", "ObjA", 1.0))
-    for i in range(4):  # recent window: orphan spend up
+    for i in range(5):  # recent window: orphan spend up
         r = _rec(f"o{i}", f"d{i}", None, 1.0, orphan=True)
         r.ts = 1000.0 + i
         s.insert(r)

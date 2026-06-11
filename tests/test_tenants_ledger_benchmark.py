@@ -101,6 +101,40 @@ def test_default_tenant_matches_legacy_null_rows(tmp_path):
     st.close()
 
 
+def test_report_suppresses_raw_scalars_below_k(tmp_path):
+    # round-3 HIGH: a sub-k tenant must not expose its exact total_cost_usd/tokens/events/orphan_share -
+    # those raw scalars sat un-gated beside their DP twin. below k they are None; the DP twin is None too.
+    st = DerivedStore(tmp_path / "s.db")
+    for i in range(3):     # 3 < k=5
+        st.insert(_rec(f"eu{i}", f"a{i}", tenant="acme-eu", cost=2.0))
+    rep = management_report(st, k=5, tenant="acme-eu")
+    assert rep["total_cost_usd"] is None and rep["total_tokens"] is None
+    assert rep["total_events"] is None and rep["orphan_token_share"] is None
+    assert rep["total_cost_usd_dp"] is None
+    # at >= k the raw scalars are released again
+    for i in range(3, 6):
+        st.insert(_rec(f"eu{i}", f"a{i}", tenant="acme-eu", cost=2.0))
+    rep2 = management_report(st, k=5, tenant="acme-eu")
+    assert rep2["total_cost_usd"] is not None and rep2["total_cost_usd"] > 0
+    st.close()
+
+
+def test_benchmark_withholds_subk_focus_own_ratios(tmp_path):
+    # round-3 HIGH: your_ratios leaked a sub-k focus tenant's own vector to any org peer who named it.
+    st = DerivedStore(tmp_path / "s.db")
+    _seed_three_tenants(st)                         # three qualifying acme tenants
+    for i in range(2):                              # a 2-dev (sub-k) tenant
+        st.insert(_rec(f"tiny{i}", f"tiny-a{i}", tenant="acme-tiny"))
+    out = benchmark(st, tenants=["acme-eu", "acme-us", "acme-apac", "acme-tiny"],
+                    focus_tenant="acme-tiny", k=5, k_tenants=3)
+    assert out["your_ratios"] == {}                 # sub-k focus exposes no own ratios
+    # a qualifying focus still gets its own ratios
+    out2 = benchmark(st, tenants=["acme-eu", "acme-us", "acme-apac"], focus_tenant="acme-eu",
+                     k=5, k_tenants=3)
+    assert out2["your_ratios"]
+    st.close()
+
+
 def test_management_report_scoped_to_tenant(tmp_path):
     st = DerivedStore(tmp_path / "s.db")
     for i in range(5):
@@ -194,6 +228,27 @@ def test_ledger_k_gates_savings_at_read_time(tmp_path):
     summ = led.summary(store, "t", k=5)
     assert summ["reuse_avoided_usd"] == 4.0                       # only the >= k objective credited
     assert summ["events_credited"] == 1 and summ["events_suppressed"] == 1
+    led.close()
+    store.close()
+
+
+def test_ledger_credits_per_cluster_not_per_pair(tmp_path):
+    # round-3 HIGH bug: crediting one full cost-to-solve per developer PAIR booked C(n,2) and overstated
+    # savings ~n/2x. the avoided re-solves for one piece of work is at most (distinct solvers - 1).
+    store = DerivedStore(tmp_path / "s.db")
+    _seed_cohort(store, tenant="t", objective="O", work_type="feature", n=5, cost=2.0)
+    led = LedgerStore(tmp_path / "l.db")
+    # 4 developers all match each other on the same objective x work_type -> C(4,2)=6 pair rows
+    devs = ["a", "b", "c", "d"]
+    pairs = [(devs[i], devs[j]) for i in range(len(devs)) for j in range(i + 1, len(devs))]
+    assert len(pairs) == 6
+    for p in pairs:
+        led.book(AvoidedCostEvent("t", "O", "feature", "c", 0, "live_duplication", 0, 1.0), pair=p)
+    summ = led.summary(store, "t", k=5)
+    cts = 2.0 * 0.5      # live_duplication factor on a homogeneous cost-to-solve of 2.0
+    # 4 distinct participants -> 3 avoided re-solves, NOT 6 pairs
+    assert summ["events_credited"] == 3
+    assert summ["reuse_avoided_usd"] == round(cts * 3, 2)
     led.close()
     store.close()
 
@@ -517,8 +572,10 @@ def test_api_drift_is_tenant_scoped(tmp_path, monkeypatch):
     client = TestClient(server.app)
     out = client.get("/api/drift", headers={"Authorization": "Bearer acme-mgr"}).json()
     if out["trend"]:
-        # the recent-window cost is acme-eu only (a few dollars), never the acme-us thousands
-        assert out["trend"]["recent_window"]["cost"] < 100.0
+        # the recent-window cost is acme-eu only - never the acme-us thousands. with < k developers per
+        # window it is k-suppressed to None (also no leak); either way it is never the cross-tenant total.
+        rc = out["trend"]["recent_window"]["cost"]
+        assert rc is None or rc < 100.0
 
 
 def test_broker_enforces_org_wall():

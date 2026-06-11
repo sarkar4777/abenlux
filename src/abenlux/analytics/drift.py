@@ -55,10 +55,13 @@ def spend_trend(
     orphan_abs_threshold: float = 0.10,   # +10 percentage points of orphan share -> alert
     cost_rel_threshold: float = 0.25,     # +25% spend window-over-window -> alert
     tenant: str | None = None,            # scope the trend to one tenant (None = org-wide / legacy)
+    k: int = 1,                           # k-anonymity floor: a window with < k developers is suppressed
 ) -> DriftReport | None:
     """compare the recent half of the data against the prior half. returns None if there isn't
     enough history (a single window) to make a comparison. tenant scopes the trend so a tenant report
-    never shows the org-wide (cross-tenant) spend/actor figures."""
+    never shows the org-wide (cross-tenant) spend/actor figures. a window backed by fewer than k
+    developers has its raw cost/token/event figures suppressed - otherwise a single-developer tenant's
+    exact per-window spend would leak through the one report surface that every other figure k-gates."""
     lo, hi = store.time_bounds(tenant=tenant)
     if hi <= lo:
         return None
@@ -67,6 +70,15 @@ def spend_trend(
     recent = store.window_stats(mid, hi + 1e-9, tenant=tenant)  # include the max-ts row in the recent window
     if prior["events"] == 0 or recent["events"] == 0:
         return None
+    if prior["actors"] < k or recent["actors"] < k:
+        # a sub-k window: suppress the raw figures and the alert (the drift signal would itself reveal
+        # a single developer's spend movement). keep only the suppressed marker.
+        for w in (prior, recent):
+            for f in ("events", "tokens", "cost", "orphan_tokens"):
+                w[f] = None
+            w["suppressed"] = True
+        flat = MetricDrift("suppressed", 0.0, 0.0, 0.0, "flat", False)
+        return DriftReport(prior_window=prior, recent_window=recent, orphan_share=flat, cost=flat)
     return DriftReport(
         prior_window=prior,
         recent_window=recent,

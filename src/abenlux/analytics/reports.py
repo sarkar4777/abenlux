@@ -60,14 +60,21 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     by_tool = _gate_rows(store.rollup("tool", tenant=tenant), gate)
     by_model = _gate_rows(store.rollup("model", tenant=tenant), gate)
 
-    # org-wide scalars: noise them, and only release when the whole org clears k
+    # org-wide scalars: noise them, and only release when the whole org clears k. the RAW scalars are
+    # gated on the SAME k-threshold (None below k) so a sub-k tenant/org never exposes an exact total
+    # that the DP twin is careful to suppress - otherwise the raw figure defeats its own privacy gate.
+    org_clears_k = gate.allows(org_actors)
     noisy_cost = gate.noisy_count(totals["cost"], org_actors)
     orphan_share = store.orphan_token_share(tenant=tenant)
 
     # recoverable resent-history, cache-AWARE. resent history that is already a cache hit is cheap
     # and not recoverable, so we only count the prefix that was billed as fresh input
     # (dup - cache_read). priced as a band: cache-read floor .. full-input ceiling.
-    blended = (totals["cost"] / totals["tokens"]) if totals["tokens"] else 0.0
+    # the per-token rate is blended over ALL billed tokens (input+output+cache), so a cache-heavy org's
+    # cache dollars in the numerator are matched by cache tokens in the denominator (mixing cache cost
+    # into the numerator while excluding cache tokens from the denominator overstates the band).
+    billed_tokens = totals["tokens"] + totals.get("cache_read", 0) + totals.get("cache_creation", 0)
+    blended = (totals["cost"] / billed_tokens) if billed_tokens else 0.0
     dup = totals["dup_tokens"]
     uncached_dup = max(0, dup - totals.get("cache_read", 0))
     waste_floor = round(uncached_dup * blended * 0.1, 2)   # if made fully cacheable
@@ -77,7 +84,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     cache_base = cache_read + totals.get("input_tokens", 0)
     cache_hit_ratio = round(cache_read / cache_base, 4) if cache_base else 0.0
 
-    trend = spend_trend(store, tenant=tenant)  # recent vs prior window, None if not enough history
+    trend = spend_trend(store, tenant=tenant, k=k)  # recent vs prior window, k-gated, None if too little history
 
     budgets = []
     if kg is not None:
@@ -127,12 +134,17 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         "investment": investment,
         "new_initiatives": new_initiatives,
         "org_actors": org_actors,
-        "total_events": totals["n"],
-        "total_tokens": totals["tokens"],
-        "total_cost_usd": round(totals["cost"], 2),
+        # raw org-wide scalars are None below k (the cohort is too small to expose an exact figure);
+        # callers fall back to the DP-noised total_cost_usd_dp / the suppression note.
+        "total_events": totals["n"] if org_clears_k else None,
+        "total_tokens": totals["tokens"] if org_clears_k else None,
+        "total_cost_usd": round(totals["cost"], 2) if org_clears_k else None,
         "total_cost_usd_dp": noisy_cost,             # None if org < k
-        "orphan_token_share": round(orphan_share, 4),
+        "orphan_token_share": round(orphan_share, 4) if org_clears_k else None,
         "unpriced_events": totals["unpriced"],
+        # the dollar value of spend on models not in the price table is otherwise invisible in the $0
+        # placeholder cost. surface it as a count + a flag so the headline total is honestly incomplete.
+        "unpriced_spend_present": totals["unpriced"] > 0,
         "cache_hit_ratio": cache_hit_ratio,
         "cache_read_tokens": cache_read,
         "recoverable_resent_history_usd": {"floor": waste_floor, "ceiling": waste_ceiling},

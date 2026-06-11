@@ -15,3 +15,6 @@ build/
 .claude/
 CLAUDE.md
 .mcp.json
+
+# local dev stack state (make dev)
+.dev/

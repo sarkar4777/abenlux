@@ -1,8 +1,10 @@
-.PHONY: install demo test gateway serve tiers report onboard lint
+.PHONY: install demo dev test gateway serve tiers report onboard lint
 install:
 	pip install -e ".[dev]"
 demo:
 	python -m abenlux.cli demo
+dev:
+	python scripts/dev.py
 test:
 	pytest -q
 gateway:

@@ -127,7 +127,19 @@ cd abenlux
 make install          # installs the `abenlux` command (pip install -e ".[dev]")
 ```
 
-**The fastest way to see it work (one terminal, all on your machine, no server):**
+**Easiest: one command boots everything.**
+
+```bash
+make dev
+```
+
+That starts all three pieces wired together on your machine (a fake model upstream, the management
+server + dashboard on `:8090`, and the developer edge agent on `:8088`), prints the URLs and the demo
+sign-in tokens, and stays up until you press Ctrl-C. Point any AI tool at `http://127.0.0.1:8088`, open
+`http://127.0.0.1:8090` for the dashboard, and run `abenlux me` for the developer view. Nothing to
+configure, no API key, no tokens spent. The rest of this section shows what `make dev` does by hand.
+
+**Run the pieces by hand (one terminal, all on your machine, no server):**
 
 ```bash
 abenlux mock                                                    # a fake model, so no API key/spend
@@ -164,6 +176,7 @@ not have to write any config to try it.
 ## Want to change the code?
 
 ```bash
+make dev      # boot the live stack (mock + server + edge) and poke at your change
 make test     # run all tests (fast)
 make lint     # style check (ruff)
 make demo     # run the whole pipeline once, offline, to see what a change does

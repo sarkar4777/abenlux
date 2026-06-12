@@ -126,7 +126,8 @@ def test_a_broken_strategy_is_skipped_never_raises():
 
 def test_enabled_strategies_spec():
     assert enabled_strategies("off") == []
-    assert {s.name for s in enabled_strategies(None)} == {"prefix_stabilize"}   # safe default only
+    # the safe default set is the lossless, behavior-safe ones that need no developer decision
+    assert {s.name for s in enabled_strategies(None)} == {"prefix_stabilize", "cache_breakpoints"}
     assert {s.name for s in enabled_strategies("all")} == set(strategies())
     assert [s.name for s in enabled_strategies("command_trim,otsl_tables")] == ["command_trim", "otsl_tables"]
 
@@ -136,6 +137,37 @@ def test_default_strategies_are_lossless_and_non_content_rewriting():
     for s in strategies().values():
         if s.default_on:
             assert s.lossless and not s.rewrites_prompt
+
+
+def test_cache_breakpoints_marks_the_stable_system_prompt():
+    big = "You are a senior engineer. Follow the house rules. " * 80   # well over the size guard
+    body = _anthropic(big, "fix the bug")
+    out = compress_request(body, "anthropic", [strategies()["cache_breakpoints"]])
+    assert "cache_breakpoints" in out.applied
+    sysout = out.body["system"]
+    assert isinstance(sysout, list) and sysout[-1]["cache_control"] == {"type": "ephemeral"}
+    assert big.strip()[:20] in sysout[-1]["text"]            # the words the model reads are unchanged
+
+
+def test_cache_breakpoints_skips_a_tiny_prompt_and_non_anthropic():
+    out = compress_request(_anthropic("You are terse.", "hi"), "anthropic",
+                           [strategies()["cache_breakpoints"]])
+    assert out.applied == []                                  # too small to be worth caching
+    oai = {"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "x" * 5000},
+                                                {"role": "user", "content": "hi"}]}
+    assert compress_request(oai, "openai", [strategies()["cache_breakpoints"]]).applied == []
+
+
+def test_tool_result_trim_folds_noisy_tool_output():
+    noisy = "\x1b[31mERR\x1b[0m\n" + "\n".join(["retry connection"] * 60) + "\ndone"
+    body = {"model": "claude-opus-4-8", "messages": [
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": noisy},
+            {"type": "text", "text": "what failed?"}]}]}
+    out = compress_request(body, "anthropic", [strategies()["tool_result_trim"]])
+    trimmed = out.body["messages"][0]["content"][0]["content"]
+    assert "\x1b[" not in trimmed and "... x60" in trimmed    # color gone, repeats folded
+    assert out.body["messages"][0]["content"][1]["text"] == "what failed?"   # the question is untouched
 
 
 def test_per_strategy_attribution_sums_to_total():

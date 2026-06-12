@@ -165,26 +165,31 @@ def _prefix_stabilize(body: dict, provider: str) -> Optional[dict]:
     return _rewrite(body, provider, {"system"}, transform)
 
 
+def _trim_text(text: str) -> str:
+    # strip the color codes a terminal adds, fold a run of identical lines into one line plus a count,
+    # and if the block is still huge keep the first and last part and drop the boring middle. this turns
+    # a giant pasted log into the few lines that actually matter without losing the head or the tail.
+    if "\x1b[" not in text and "\n" not in text:
+        return text
+    t = _ANSI.sub("", text)
+    lines = t.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        j = i
+        while j + 1 < len(lines) and lines[j + 1] == lines[i]:
+            j += 1
+        out.append(lines[i] if j == i else f"{lines[i]}    ... x{j - i + 1}")
+        i = j + 1
+    if len(out) > 200:                                # truncate huge blocks, keep head + tail
+        out = out[:120] + [f"... ({len(out) - 160} lines trimmed by abenlux, full output on disk)"] + out[-40:]
+    return "\n".join(out)
+
+
 def _command_trim(body: dict, provider: str) -> Optional[dict]:
-    # RTK-style: in user content, strip ANSI escapes, collapse runs of identical lines into one with a
-    # count, and truncate a very long block keeping head+tail. near-lossless: it removes noise/repeats.
-    def transform(text: str) -> str:
-        if "\x1b[" not in text and "\n" not in text:
-            return text
-        t = _ANSI.sub("", text)
-        lines = t.split("\n")
-        out: list[str] = []
-        i = 0
-        while i < len(lines):
-            j = i
-            while j + 1 < len(lines) and lines[j + 1] == lines[i]:
-                j += 1
-            out.append(lines[i] if j == i else f"{lines[i]}    ... x{j - i + 1}")
-            i = j + 1
-        if len(out) > 200:                                # truncate huge blocks, keep head + tail
-            out = out[:120] + [f"... ({len(out) - 160} lines trimmed by abenlux, full output on disk)"] + out[-40:]
-        return "\n".join(out)
-    return _rewrite(body, provider, {"user"}, transform)
+    # RTK-style. in the user message, fold away the noise (color codes and repeated lines) and shorten a
+    # very long pasted log. it removes only noise and repeats, so the meaning is kept.
+    return _rewrite(body, provider, {"user"}, _trim_text)
 
 
 def _otsl_table(html: str) -> str:
@@ -255,6 +260,113 @@ def _slim_tools(body: dict, provider: str) -> Optional[dict]:
     return None
 
 
+def _tool_result_trim(body: dict, provider: str) -> Optional[dict]:
+    # in an agent session the biggest chunk of every request is the OUTPUT of the tools the agent ran
+    # (file reads, test runs, shell output) and it gets resent on every turn. this folds the noise out of
+    # those tool-result blocks the same way command_trim folds a pasted log. it never touches the
+    # instructions or the answer, only the machine output the model rarely needs in full.
+    new = copy.deepcopy(body)
+    changed = False
+    if provider == "google":
+        for content in new.get("contents", []) if isinstance(new.get("contents"), list) else []:
+            for part in content.get("parts", []) if isinstance(content.get("parts"), list) else []:
+                fr = part.get("functionResponse") if isinstance(part, dict) else None
+                resp = fr.get("response") if isinstance(fr, dict) else None
+                if isinstance(resp, dict):
+                    for k, v in resp.items():
+                        if isinstance(v, str):
+                            t = _trim_text(v)
+                            if t != v:
+                                resp[k], changed = t, True
+        return new if changed else None
+    # anthropic / openai. anthropic puts tool output in a user message as a tool_result block. openai
+    # puts it in a message whose role is "tool".
+    for msg in new.get("messages", []) if isinstance(new.get("messages"), list) else []:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+            t = _trim_text(msg["content"])
+            if t != msg["content"]:
+                msg["content"], changed = t, True
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                inner = block.get("content")
+                if isinstance(inner, str):
+                    t = _trim_text(inner)
+                    if t != inner:
+                        block["content"], changed = t, True
+                elif isinstance(inner, list):
+                    for sub in inner:
+                        if isinstance(sub, dict) and isinstance(sub.get("text"), str):
+                            t = _trim_text(sub["text"])
+                            if t != sub["text"]:
+                                sub["text"], changed = t, True
+    return new if changed else None
+
+
+# the most input tokens are saved when the model can READ a long stable prefix from its cache instead of
+# being charged for it again. Anthropic only caches a span if the request marks where it ends. this marks
+# the end of the stable system prompt (and the settled part of the conversation) so the provider caches
+# it. it adds no words the model reads, so it cannot change the answer.
+_MAX_CACHE_BREAKPOINTS = 4
+
+
+def _count_cache_control(body: dict) -> int:
+    n = 0
+    sys = body.get("system")
+    if isinstance(sys, list):
+        n += sum(1 for b in sys if isinstance(b, dict) and b.get("cache_control"))
+    for msg in body.get("messages", []) if isinstance(body.get("messages"), list) else []:
+        c = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(c, list):
+            n += sum(1 for b in c if isinstance(b, dict) and b.get("cache_control"))
+    return n
+
+
+def _cache_breakpoints(body: dict, provider: str) -> Optional[dict]:
+    # only Anthropic needs an explicit marker. OpenAI and Gemini cache a common prefix on their own, and
+    # prefix_stabilize already keeps that prefix steady for them.
+    if provider != "anthropic":
+        return None
+    sys = body.get("system")
+    if not sys:
+        return None
+    # only worth marking a prompt large enough that the provider will actually cache it. a tiny system
+    # prompt is harmless to mark but pointless, so skip it.
+    sys_text = sys if isinstance(sys, str) else "".join(
+        b.get("text", "") for b in sys if isinstance(b, dict)) if isinstance(sys, list) else ""
+    if len(sys_text) < 2000:
+        return None
+    if _count_cache_control(body) >= _MAX_CACHE_BREAKPOINTS:
+        return None
+    new = copy.deepcopy(body)
+    s = new.get("system")
+    if isinstance(s, str):
+        if not s.strip():
+            return None
+        new["system"] = [{"type": "text", "text": s, "cache_control": {"type": "ephemeral"}}]
+        return new
+    if isinstance(s, list) and s:
+        # mark the last text block of the system prompt if none of them are marked yet
+        last_text = None
+        for blk in s:
+            if isinstance(blk, dict) and isinstance(blk.get("text"), str):
+                last_text = blk
+            if isinstance(blk, dict) and blk.get("cache_control"):
+                return None
+        if last_text is not None:
+            last_text["cache_control"] = {"type": "ephemeral"}
+            return new
+    return None
+
+
+register(Strategy("cache_breakpoints", lossless=True, default_on=True, rewrites_prompt=False,
+                  fn=_cache_breakpoints, note="mark the end of the stable prompt so the provider caches it"))
+register(Strategy("tool_result_trim", lossless=False, default_on=False, rewrites_prompt=True,
+                  fn=_tool_result_trim, note="fold the noise out of resent tool output in an agent session"))
 register(Strategy("prefix_stabilize", lossless=True, default_on=True, rewrites_prompt=False,
                   fn=_prefix_stabilize, note="move an injected date/id out of the cache-stable prefix"))
 register(Strategy("command_trim", lossless=False, default_on=False, rewrites_prompt=True,

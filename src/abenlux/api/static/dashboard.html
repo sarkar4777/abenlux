@@ -267,7 +267,8 @@ function driftBanner(trend){
 }
 
 const CZ_LABEL = {prefix_stabilize:"Prefix-Break Localizer", command_trim:"Command-output trim (RTK)",
-  otsl_tables:"DocLang / OTSL tables", compress_json:"JSON minify (Headroom)", slim_tools:"Tool-def slim (Bifrost)"};
+  otsl_tables:"DocLang / OTSL tables", compress_json:"JSON minify (Headroom)", slim_tools:"Tool-def slim (Bifrost)",
+  cache_breakpoints:"Cache breakpoints", tool_result_trim:"Tool-result trim"};
 function compressionView(cz){
   if(!(cz.saved_input_tokens || cz.cache_hits))
     return '<div class="muted">no compression savings yet. the edge layer stabilizes the cache prefix automatically; enable more strategies with ABEN_COMPRESS.</div>';

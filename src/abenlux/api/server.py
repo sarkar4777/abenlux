@@ -66,6 +66,11 @@ def _capsules():
     return CapsuleStore(os.getenv("ABEN_CAPSULE_DB", "abenlux-capsules.db"))
 
 
+def _outcomes():
+    from abenlux.analytics.outcomes import OutcomeStore
+    return OutcomeStore(os.getenv("ABEN_OUTCOME_DB", "abenlux-outcomes.db"))
+
+
 def _ledger():
     import os
 
@@ -236,6 +241,47 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     mstore.close()
     store.close()
     return {"ingested": n, "rejected": rejected}
+
+
+def _objective_for_ticket(ticket_id: str | None) -> str | None:
+    # resolve a ticket like ACME-123 to its objective through the same prefix map attribution uses.
+    if not ticket_id or "-" not in ticket_id:
+        return None
+    return _kg.ticket_prefix_to_objective.get(ticket_id.split("-", 1)[0].upper())
+
+
+@app.post("/v1/outcomes")
+async def ingest_outcomes(request: Request, authorization: str | None = Header(default=None)):
+    # the value feed. a git or CI integration posts content-free facts about each change (did it merge,
+    # was it reverted, lines added and removed) keyed by the ticket, so the report can join spend to
+    # shipped work. gated by the same ingest token as the spend feed, bounded the same way.
+    token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
+    if token not in SETTINGS.ingest_tokens:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
+    raw = await request.body()
+    if len(raw) > _MAX_INGEST_BYTES:
+        raise HTTPException(status_code=413, detail="payload too large")
+    try:
+        items = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="invalid JSON") from None
+    items = items if isinstance(items, list) else [items]
+    if len(items) > _MAX_INGEST_BATCH:
+        raise HTTPException(status_code=413, detail=f"batch too large (max {_MAX_INGEST_BATCH})")
+    outcomes = _outcomes()
+    n = 0
+    for d in items:
+        if not isinstance(d, dict):
+            continue
+        rec = dict(d)
+        if not rec.get("objective_id"):
+            rec["objective_id"] = _objective_for_ticket(rec.get("ticket_id"))
+        if _kg.objectives and rec.get("objective_id") not in _kg.objectives:
+            continue                       # only a known objective, so a forged id cannot seed value
+        if outcomes.record(rec):
+            n += 1
+    outcomes.close()
+    return {"recorded": n}
 
 
 def _ingest_identity_index():
@@ -478,7 +524,11 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     _need(principal, Permission.VIEW_AGGREGATES)
     scope = _resolve_report_tenant(principal, tenant)
     store = _store()
-    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg, tenant=scope)
+    outcomes = _outcomes()
+    by_obj = outcomes.by_objective(scope)
+    outcomes.close()
+    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg,
+                            tenant=scope, outcomes=by_obj)
     ledger = _ledger()
     # avoided re-solves, recomputed live from the derived store, beside spend (never inside it)
     rep["reuse_yield"] = ledger.summary(store, scope, k=SETTINGS.k_anon)

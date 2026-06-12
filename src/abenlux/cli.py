@@ -229,9 +229,15 @@ def cmd_report(args) -> None:
     kg = KnowledgeGraph.from_yaml(SETTINGS.kg_path) if SETTINGS.kg_path else KnowledgeGraph()
     tenant = getattr(args, "tenant", None) or SETTINGS.tenant_id
     store = open_store(SETTINGS.db_path)
-    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg, tenant=tenant)
-    from abenlux.ledger import open_ledger
     import os as _os
+
+    from abenlux.analytics.outcomes import OutcomeStore
+    _oc = OutcomeStore(_os.getenv("ABEN_OUTCOME_DB", "abenlux-outcomes.db"))
+    _by_obj = _oc.by_objective(tenant)
+    _oc.close()
+    rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg,
+                            tenant=tenant, outcomes=_by_obj)
+    from abenlux.ledger import open_ledger
     ledger = open_ledger(_os.getenv("ABEN_LEDGER_DB", "abenlux-ledger.db"))
     rep["reuse_yield"] = ledger.summary(store, tenant, k=SETTINGS.k_anon)
     ledger.close()
@@ -242,6 +248,13 @@ def cmd_report(args) -> None:
     print(f"== Abenlux management report (k-anonymity gated)  tenant:{tenant} ==")
     print(f" actors:{rep['org_actors']}  events:{rep['total_events']}  "
           f"tokens:{rep['total_tokens']:,}  cost:${rep['total_cost_usd']:,.2f}")
+    val = rep.get("value")
+    if val and val.get("merged"):
+        cpm = val.get("cost_per_merged_change")
+        print(f" value : {val['merged']} merged changes  "
+              f"{f'${cpm:,.2f} per merged change  ' if cpm is not None else ''}"
+              f"{(val.get('merge_rate') or 0)*100:.0f}% merge rate  "
+              f"{(val.get('revert_rate') or 0)*100:.0f}% reverted  (spend joined to shipped work)")
     print(f" orphan token share : {rep['orphan_token_share']*100:.1f}%  "
           f"(unattributed AI spend - the headline waste metric)")
     print(f" prompt-cache hit ratio : {rep['cache_hit_ratio']*100:.1f}%  "

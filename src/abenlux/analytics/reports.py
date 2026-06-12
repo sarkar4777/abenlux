@@ -49,9 +49,10 @@ def _gate_rows(rows: list[dict], gate: KAnonymityGate) -> list[RollupRow]:
 
 
 def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.0, kg=None,
-                      tenant: str | None = None) -> dict:
+                      tenant: str | None = None, outcomes: dict | None = None) -> dict:
     """org-level spend->value report. all per-group figures are k-anonymity gated. tenant scopes the
-    whole report to one org unit / geography (None = org-wide / legacy single-tenant)."""
+    whole report to one org unit / geography (None = org-wide / legacy single-tenant). outcomes is the
+    content-free value feed rolled up per objective, used to turn spend into a return-on-spend line."""
     gate = KAnonymityGate(k=k, dp_epsilon=dp_epsilon)
     totals = store.totals(tenant=tenant)
     org_actors = totals["actors"]
@@ -89,6 +90,23 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         "by_strategy": {k: {"tokens": v, "usd": round(v * blended, 2)}
                         for k, v in sorted(by_strategy.items(), key=lambda kv: -kv[1])},
     }
+    # value: join the content-free outcome feed to spend so the report shows return on spend, not just
+    # spend. only released when the whole org clears k, the same wall the dollar total sits behind.
+    value = None
+    if outcomes and org_clears_k:
+        merged = sum(v.get("merged", 0) for v in outcomes.values())
+        reverted = sum(v.get("reverted", 0) for v in outcomes.values())
+        changes = sum(v.get("changes", 0) for v in outcomes.values())
+        added = sum(v.get("lines_added", 0) for v in outcomes.values())
+        removed = sum(v.get("lines_removed", 0) for v in outcomes.values())
+        value = {
+            "changes": changes, "merged": merged, "reverted": reverted,
+            "merge_rate": round(merged / changes, 3) if changes else None,
+            "revert_rate": round(reverted / merged, 3) if merged else None,
+            "cost_per_merged_change": round(totals["cost"] / merged, 2) if merged else None,
+            "net_lines": added - removed,
+        }
+
     dup = totals["dup_tokens"]
     uncached_dup = max(0, dup - totals.get("cache_read", 0))
     waste_floor = round(uncached_dup * blended * 0.1, 2)   # if made fully cacheable
@@ -160,6 +178,7 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         # placeholder cost. surface it as a count + a flag so the headline total is honestly incomplete.
         "unpriced_spend_present": totals["unpriced"] > 0,
         "compression": compression,                  # tokens/$ saved by the edge compression layer + cache hits
+        "value": value,                              # spend joined to shipped-work outcomes (None until fed)
         "cache_hit_ratio": cache_hit_ratio,
         "cache_read_tokens": cache_read,
         "recoverable_resent_history_usd": {"floor": waste_floor, "ceiling": waste_ceiling},

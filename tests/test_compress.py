@@ -265,3 +265,29 @@ def test_ingest_clamps_negative_and_absurd_token_counts():
     _harden_inbound(rec)
     assert rec.input_tokens == 0 and rec.output_tokens <= 100_000_000 and rec.saved_input_tokens == 0
     assert rec.cost_usd >= 0.0
+
+
+def test_value_numerator_joins_outcomes_to_spend(tmp_path):
+    # spend joined to shipped-work outcomes produces a return-on-spend line, k-gated
+    from abenlux.analytics.outcomes import OutcomeStore
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "c.db")
+    for i in range(5):
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="claude-opus-4-8",
+                               input_tokens=1000, output_tokens=100, duplicate_history_tokens=0,
+                               cost_usd=2.0, objective_id="O", objective_label="O", is_orphan=False))
+    oc = OutcomeStore(tmp_path / "o.db")
+    for i in range(4):
+        oc.record({"outcome_id": f"o{i}", "objective_id": "O", "merged": 1,
+                   "lines_added": 50, "lines_removed": 10})
+    oc.record({"outcome_id": "o9", "objective_id": "O", "merged": 0, "reverted": 1})
+    rep = management_report(s, k=5, outcomes=oc.by_objective(None))
+    v = rep["value"]
+    assert v["merged"] == 4 and v["changes"] == 5 and v["merge_rate"] == 0.8
+    assert v["cost_per_merged_change"] == 2.5      # $10 spend / 4 merged
+    assert v["net_lines"] == 160                   # 4 * (50-10)
+    oc.close()
+    s.close()

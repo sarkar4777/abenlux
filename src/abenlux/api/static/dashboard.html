@@ -94,6 +94,8 @@
       <div class="grid kpis" id="mgmtKpis"></div>
       <h2>Reuse-Yield Ledger <span class="hint">money NOT spent · re-solves the org avoided · k-anonymity gated · shown beside spend, never inside it</span></h2>
       <div class="card" id="reuseYield"></div>
+      <h2>Spend to value <span class="hint">spend joined to shipped work from the content-free git/CI feed · the return on AI spend, k-anonymized</span></h2>
+      <div class="card" id="value"></div>
       <h2>Compression yield <span class="hint">tokens the edge compression layer removed + calls served from the local cache · realized savings, beside spend</span></h2>
       <div class="card" id="compression"></div>
       <h2>Budgets <span class="hint">spend vs ceiling · run-rate forecast to period end</span></h2>
@@ -322,6 +324,15 @@ async function loadManagement(){
     kpi("Orphan spend", (rep.orphan_token_share*100).toFixed(1)+"%", "unattributed - the headline waste metric")+
     kpi("Recoverable resent-history", fmtUSD(band.floor)+"–"+fmtUSD(band.ceiling), "cache-read floor → full-input ceiling");
   $("#reuseYield").innerHTML = reuseYieldView(ry);
+  const v = rep.value;
+  $("#value").innerHTML = (v && v.merged)
+    ? `<div style="display:flex;gap:30px;align-items:baseline">
+         <div><div class="val" style="color:var(--good);font-size:30px">${v.cost_per_merged_change!=null?fmtUSD(v.cost_per_merged_change):"-"}</div><div class="muted">per merged change</div></div>
+         <div><div class="val" style="font-size:30px">${fmtN(v.merged)}</div><div class="muted">merged of ${fmtN(v.changes)} changes</div></div>
+         <div><div class="val" style="font-size:30px">${Math.round((v.merge_rate||0)*100)}%</div><div class="muted">merge rate</div></div>
+         <div><div class="val" style="font-size:30px">${Math.round((v.revert_rate||0)*100)}%</div><div class="muted">reverted</div></div>
+       </div>`
+    : '<div class="muted">no value feed yet. point a git or CI integration at POST /v1/outcomes to join spend to shipped work (merged changes, reverts, lines), and this shows the return on spend.</div>';
   $("#compression").innerHTML = compressionView(rep.compression || {});
   $("#budgets").innerHTML = budgetBars(rep.budgets) || '<div class="muted">no budgets defined (set monthly_budget_usd on objectives)</div>';
   $("#investment").innerHTML = investmentView(rep.investment, rep.by_work_type||[]);

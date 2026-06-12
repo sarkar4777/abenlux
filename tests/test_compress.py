@@ -291,3 +291,25 @@ def test_value_numerator_joins_outcomes_to_spend(tmp_path):
     assert v["net_lines"] == 160                   # 4 * (50-10)
     oc.close()
     s.close()
+
+
+def test_negotiation_pack_blended_rate_and_k_gate(tmp_path):
+    from abenlux.analytics.negotiation import negotiation_pack
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "n.db")
+    # below k -> suppressed
+    s.insert(DerivedRecord(event_id="e0", ts=1.0, tier="t", provider="anthropic", actor_pseudonym="a0",
+                           request_model="claude-opus-4-8", input_tokens=500000, output_tokens=0,
+                           duplicate_history_tokens=0, cost_usd=2.5))
+    assert negotiation_pack(s, k=5)["ready"] is False
+    for i in range(1, 5):
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="claude-opus-4-8",
+                               input_tokens=500000, output_tokens=0, duplicate_history_tokens=0, cost_usd=2.5))
+    pack = negotiation_pack(s, k=5)
+    assert pack["ready"] is True
+    assert pack["blended_usd_per_mtok"] == 5.0          # $12.5 over 2.5M tokens = $5/Mtok
+    assert pack["provider_concentration"] == 1.0        # all anthropic
+    assert pack["committed_use_scenarios"][0]["discount_pct"] == 10
+    s.close()

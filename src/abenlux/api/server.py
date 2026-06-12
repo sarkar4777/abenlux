@@ -537,6 +537,19 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     return rep
 
 
+@app.get("/api/negotiation")
+async def negotiation(tenant: str | None = None, principal: Principal = Depends(current_principal)):
+    # the renewal pack. the blended rate the org pays across every tool, how concentrated the spend is,
+    # and what a committed-use discount would save. management view, k-anonymity gated.
+    _need(principal, Permission.VIEW_AGGREGATES)
+    from abenlux.analytics.negotiation import negotiation_pack
+    scope = _resolve_report_tenant(principal, tenant)
+    store = _store()
+    pack = negotiation_pack(store, tenant=scope, k=SETTINGS.k_anon)
+    store.close()
+    return pack
+
+
 @app.get("/api/export")
 async def export(dimension: str = "objective", format: str = "csv", tenant: str | None = None,
                  principal: Principal = Depends(current_principal)):

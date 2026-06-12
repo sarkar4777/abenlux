@@ -1,0 +1,8 @@
+objectives:
+  - {id: obj-acme,   label: "Acme Checkout Platform", kind: client, client: acme, monthly_budget_usd: 50}
+  - {id: obj-zenith, label: "Zenith Mobile App",      kind: innovation, monthly_budget_usd: 30}
+  - {id: obj-globex, label: "Globex Agent R and D",   kind: innovation, monthly_budget_usd: 20}
+ticket_prefix_to_objective:
+  ACME: obj-acme
+  MOB: obj-zenith
+  GLX: obj-globex

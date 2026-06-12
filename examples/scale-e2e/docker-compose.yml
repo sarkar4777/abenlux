@@ -1,0 +1,86 @@
+# Organization scale end to end. 27 developers across two orgs and three tenants, real models, load and
+# functional in one run. From the repo root:
+#   ANTHROPIC_API_KEY=... OPENAI_API_KEY=... GEMINI_API_KEY=... \
+#     docker compose -f examples/scale-e2e/docker-compose.yml up --build \
+#     --abort-on-container-exit --exit-code-from scale-driver
+# Exit code is the number of gaps found.
+
+x-image: &image
+  build: {context: ../.., dockerfile: examples/scale-e2e/Dockerfile}
+
+x-common-env: &common-env
+  ABEN_HMAC_KEY: ${ABEN_HMAC_KEY:-scale-hmac-secret}
+  ABEN_INGEST_TOKEN: ${ABEN_INGEST_TOKEN:-scale-ingest-token}
+  ABEN_KG: /config/kg.yaml
+  ABEN_K_ANON: "3"
+  ABEN_NOTIFY: "0"
+  PYTHONUNBUFFERED: "1"
+
+x-gateway-env: &gateway-env
+  <<: *common-env
+  ABEN_COLLECTOR_URL: http://collector:8090
+  ABEN_ANTHROPIC_UPSTREAM: https://api.anthropic.com
+  ABEN_GOOGLE_UPSTREAM: https://generativelanguage.googleapis.com
+  ABEN_OPENAI_UPSTREAM: https://api.openai.com
+  ABEN_EXACT_CACHE: "1"
+  ABEN_DB: /tmp/edge.db
+  ABEN_LOCAL_DB: /tmp/local.db
+  ABEN_MATCH_DB: /tmp/m.db
+
+services:
+  collector:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.api.server:app", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      <<: *common-env
+      ABEN_PRINCIPALS: /config/principals.yaml
+      ABEN_DB: /tmp/central.db
+      ABEN_LEDGER_DB: /tmp/ledger.db
+      ABEN_TENANT_DB: /tmp/tenants.db
+      ABEN_MATCH_DB: /tmp/matches.db
+      ABEN_CONTACT_DB: /tmp/contacts.db
+      ABEN_CAPSULE_DB: /tmp/capsules.db
+      ABEN_RELAY_DB: /tmp/relay.db
+      ABEN_OUTCOME_DB: /tmp/outcomes.db
+      ABEN_EXCHANGE_DB: /tmp/exchange.db
+    volumes: ["./config:/config:ro"]
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"], interval: 2s, timeout: 3s, retries: 40}
+
+  gw-acme-eu:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-eu, ABEN_RESIDENCY: eu}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 40}
+
+  gw-acme-us:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: acme-us, ABEN_RESIDENCY: us}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 40}
+
+  gw-globex-eu:
+    <<: *image
+    command: ["python", "-m", "uvicorn", "abenlux.capture.gateway:app", "--host", "0.0.0.0", "--port", "8088"]
+    environment: {<<: *gateway-env, ABEN_TENANT: globex-eu, ABEN_RESIDENCY: eu}
+    volumes: ["./config:/config:ro"]
+    depends_on: {collector: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:8088/health"], interval: 2s, timeout: 3s, retries: 40}
+
+  scale-driver:
+    <<: *image
+    command: ["python", "-u", "scale_driver.py"]
+    environment:
+      <<: *common-env
+      ABEN_COLLECTOR_URL: http://collector:8090
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      collector: {condition: service_healthy}
+      gw-acme-eu: {condition: service_healthy}
+      gw-acme-us: {condition: service_healthy}
+      gw-globex-eu: {condition: service_healthy}

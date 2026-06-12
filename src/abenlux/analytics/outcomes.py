@@ -55,10 +55,12 @@ class OutcomeStore:
         return True
 
     def by_objective(self, tenant: str | None = None) -> dict:
-        # roll the outcome facts up per objective so the report can join them to spend.
+        # roll the outcome facts up per objective so the report can join them to spend. a merged change
+        # is an org-level fact, so an outcome with no tenant counts toward any tenant that spent on its
+        # objective. the report only attaches value for objectives the tenant actually spent on.
         where, params = "", ()
         if tenant is not None:
-            where = " WHERE (tenant_id=? OR tenant_id IS NULL)" if tenant == "default" else " WHERE tenant_id=?"
+            where = " WHERE (tenant_id=? OR tenant_id IS NULL)"
             params = (tenant,)
         rows = self.conn.execute(
             "SELECT objective_id, COUNT(*) n, COALESCE(SUM(merged),0), COALESCE(SUM(reverted),0),"

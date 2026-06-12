@@ -671,6 +671,11 @@ def cmd_help(_args) -> None:
     print(_OVERVIEW)
 
 
+def cmd_mcp(args) -> None:
+    from abenlux.mcp_server import serve
+    serve()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="abenlux", description="AI spend -> value attribution plane.",
                                 add_help=True)
@@ -702,6 +707,8 @@ def main() -> None:
     mk.set_defaults(func=cmd_mock)
 
     sub.add_parser("tiers", help="the tool capability matrix").set_defaults(func=cmd_tiers)
+
+    sub.add_parser("mcp", help="run the read plane as an MCP server for coding agents").set_defaults(func=cmd_mcp)
 
     o = sub.add_parser("onboard", help="print the exact setup for a tool on your OS/shell")
     o.add_argument("tool", nargs="?", help="tool name, e.g. claude-code, aider, cline")

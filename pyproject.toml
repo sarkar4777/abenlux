@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 ml = ["sentence-transformers>=2.6"]       # optional semantic embeddings backend
 postgres = ["psycopg[binary]>=3.1"]       # optional central store for thousands of developers
+mcp = ["mcp>=1.0"]                         # optional model-context-protocol server for coding agents
 dev = ["pytest>=8.0", "ruff>=0.4", "anthropic>=0.40", "openai>=1.40"]
 
 [project.scripts]

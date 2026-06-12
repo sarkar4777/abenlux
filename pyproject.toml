@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.27",
   "pydantic-settings>=2.2",
   "pyyaml>=6.0",
+  "cryptography>=42",   # the forward proxy's local CA mints per-host leaf certificates
 ]
 
 [project.optional-dependencies]

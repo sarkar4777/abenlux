@@ -599,6 +599,19 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     return rep
 
 
+def _exchange_org_tokens() -> dict:
+    # optional map of org -> its own submit token, so an org can only submit AS ITSELF and cannot poison
+    # a rival's percentile. set ABEN_EXCHANGE_ORG_TOKENS="acme:tokA,globex:tokB". when unset (demo) the
+    # shared ingest token is accepted for any org.
+    raw = os.getenv("ABEN_EXCHANGE_ORG_TOKENS", "")
+    out = {}
+    for pair in raw.split(","):
+        if ":" in pair:
+            o, t = pair.split(":", 1)
+            out[o.strip()] = t.strip()
+    return out
+
+
 @app.post("/v1/exchange/submit")
 async def exchange_submit(request: Request, authorization: str | None = Header(default=None)):
     # an org posts its OWN already-blurred ratios. ingest-token gated, content-free, no raw figures.
@@ -610,6 +623,11 @@ async def exchange_submit(request: Request, authorization: str | None = Header(d
     ratios = body.get("ratios") or {}
     if not org or not isinstance(ratios, dict):
         raise HTTPException(status_code=400, detail="need org and ratios")
+    # when per-org submit tokens are configured, an org may only submit as itself, so no one can forge a
+    # rival's numbers into the exchange.
+    org_tokens = _exchange_org_tokens()
+    if org_tokens and org_tokens.get(org) != token:
+        raise HTTPException(status_code=403, detail="this token may not submit for that org")
     ex = _exchange()
     n = ex.submit(org, ratios)
     ex.close()

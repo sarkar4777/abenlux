@@ -428,3 +428,24 @@ def test_negotiation_drops_single_developer_provider_and_model(tmp_path):
     assert "anthropic" in provs and "google" not in provs      # the single-dev provider is suppressed
     assert "gemini-2.5-flash" not in models                    # and the single-dev model too
     s.close()
+
+
+def test_exchange_percentile_is_coarse_and_never_an_exact_extreme():
+    from abenlux.analytics.exchange import secure_aggregate
+    rows = [{"org": o, "metric": "cache_hit", "value": v}
+            for o, v in [("acme", 0.9), ("globex", 0.5), ("initech", 0.1)]]
+    out = secure_aggregate(rows, "acme", k_orgs=3)         # acme is the clear best
+    p = out["comparison"][0]["your_percentile"]
+    assert 0.1 <= p <= 0.9                                  # the exact 1.0 is pulled inward
+    assert (p * 4) == round(p * 4)                          # banded to quarters, not a sharp position
+
+
+def test_exchange_org_token_binding_parse():
+    import os
+    from abenlux.api.server import _exchange_org_tokens
+    os.environ["ABEN_EXCHANGE_ORG_TOKENS"] = "acme:tokA, globex:tokB"
+    try:
+        m = _exchange_org_tokens()
+        assert m == {"acme": "tokA", "globex": "tokB"}     # an org may only submit with its own token
+    finally:
+        del os.environ["ABEN_EXCHANGE_ORG_TOKENS"]

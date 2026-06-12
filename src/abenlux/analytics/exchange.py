@@ -50,11 +50,15 @@ class ExchangeStore:
 
 
 def _percentile(value: float, series: list[float], higher_is_better: bool = True) -> float:
-    # where the value sits in the group, as a fraction from 0 to 1
+    # where the value sits in the group, as a coarse fraction from 0 to 1. it is rounded to bands and
+    # the exact 0 and 1 are pulled inward so a small cohort cannot tell you that you are precisely the
+    # best or worst, which would point at a single peer. the rank still answers "above or below the pack".
     if len(series) < 2:
         return 0.5
     below = sum(1 for x in series if (x < value) == higher_is_better)
-    return round(below / (len(series) - 1), 3)
+    p = below / (len(series) - 1)
+    p = round(p * 4) / 4                       # quarter bands, not a sharp position
+    return min(0.9, max(0.1, p))              # never disclose the exact extreme
 
 
 def secure_aggregate(rows: list[dict], focus_org: str, *, k_orgs: int = COHORT_MIN_ORGS,

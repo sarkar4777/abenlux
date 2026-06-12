@@ -206,3 +206,26 @@ def test_relay_async_thread_is_double_blind_and_participant_scoped(tmp_path):
     assert "peer" in alice                                               # store returns peer, API strips it
     assert r.for_participant("px-eve") == []                            # outsiders see nothing
     r.close()
+
+
+def test_relay_redacts_in_the_store_and_keeps_concurrent_messages(tmp_path):
+    import concurrent.futures as cf
+
+    from abenlux.developer.relay import RelayStore
+    db = tmp_path / "relay.db"
+    r = RelayStore(db)
+    tid = r.ask("px-a", "px-b", "topic", "my key is sk-ant-SECRET123456789012345 do not log it")
+    assert "sk-ant-SECRET123456789012345" not in r.for_participant("px-a")[0]["messages"][0]["text"]
+    r.close()
+
+    # each write opens its own store, the way every API request does. 30 at once must all survive
+    # because each message is its own appended row, not a rewrite of one shared blob.
+    def one_reply(i):
+        s = RelayStore(db)
+        s.reply(tid, "px-a" if i % 2 else "px-b", f"msg {i}")
+        s.close()
+    with cf.ThreadPoolExecutor(max_workers=12) as ex:
+        list(ex.map(one_reply, range(30)))
+    final = RelayStore(db)
+    assert len(final.for_participant("px-a")[0]["messages"]) == 31       # opener plus all 30 replies
+    final.close()

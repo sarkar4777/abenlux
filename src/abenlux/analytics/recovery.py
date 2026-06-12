@@ -17,10 +17,13 @@ from abenlux.store import DerivedStore
 
 
 def _cos(a: list[float], b: list[float]) -> float:
-    n = min(len(a), len(b))
-    dot = sum(a[i] * b[i] for i in range(n))
-    na = sum(x * x for x in a[:n]) ** 0.5
-    nb = sum(x * x for x in b[:n]) ** 0.5
+    # vectors from two different embedder versions are not comparable, so treat a length mismatch as
+    # "not similar" rather than silently comparing a truncated prefix and printing a garbage score.
+    if len(a) != len(b):
+        return 0.0
+    dot = sum(a[i] * b[i] for i in range(len(a)))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0
 
 

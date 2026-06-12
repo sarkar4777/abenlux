@@ -356,10 +356,12 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: s
     obj = _kg.objectives.get(rec.objective_id)
     tenant = getattr(rec, "tenant_id", None) or "default"
     topic = rec.objective_label or "general"
-    # a clean call is treated as a solved piece of work that others can reuse. a retry loop is a
-    # developer still thrashing, so it is not yet a solved pattern. this is what lets a later developer
-    # match already-cracked work as reuse instead of only catching two people working live at once.
-    solved = not getattr(rec, "is_retry_loop", False)
+    # a call counts as solved-enough-to-reuse when it was NOT a retry loop AND it actually produced an
+    # answer. a thrashing retry or an empty or errored call is not a pattern worth surfacing. this is a
+    # content-free proxy for "a teammate worked this and got a result", not a claim of correctness, which
+    # is why the capsule is framed as how a teammate approached the topic, and the reuse-yield it feeds
+    # is still valued at the cohort's k-anonymous cost-to-solve, never one call.
+    solved = not getattr(rec, "is_retry_loop", False) and (getattr(rec, "output_tokens", 0) or 0) > 0
     sig = TopicSignal(
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
         topic_label=topic, client=getattr(obj, "client", None),

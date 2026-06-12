@@ -78,6 +78,7 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_tool ON derived(tool)",
         "CREATE INDEX IF NOT EXISTS idx_ts ON derived(ts)",
         "CREATE INDEX IF NOT EXISTS idx_wt ON derived(work_type)",
+        "CREATE INDEX IF NOT EXISTS idx_tenant ON derived(tenant_id)",   # every tenant-scoped aggregate uses it
     ]
 
 
@@ -196,7 +197,7 @@ class _BaseStore:
         where = " WHERE is_orphan=1 AND embedding IS NOT NULL" + (f" AND {pred}" if pred else "")
         rows = self._rows(self._exec(
             "SELECT embedding, repo, actor_pseudonym, cost_usd, input_tokens, output_tokens"
-            " FROM derived" + where + f" LIMIT {int(limit)}", params))
+            " FROM derived" + where + f" ORDER BY ts DESC LIMIT {int(limit)}", params))
         out = []
         for r in rows:
             try:

@@ -448,3 +448,9 @@ def test_exchange_org_token_binding_parse():
         assert m == {"acme": "tokA", "globex": "tokB"}     # an org may only submit with its own token
     finally:
         del os.environ["ABEN_EXCHANGE_ORG_TOKENS"]
+
+
+def test_orphan_cos_treats_dimension_mismatch_as_not_similar():
+    from abenlux.analytics.recovery import _cos
+    assert _cos([1.0, 0.0], [1.0, 0.0]) == 1.0          # same vector, fully similar
+    assert _cos([1.0, 0.0, 0.0], [1.0, 0.0]) == 0.0     # different embedder dims are not comparable

@@ -686,6 +686,53 @@ def cmd_mcp(args) -> None:
     serve()
 
 
+def cmd_proxy(args) -> None:
+    # the forward TLS-terminating proxy. works for a subscription tool and a key tool alike, because the
+    # tool routes through it as an ordinary HTTPS proxy instead of pointing a base url at it.
+    from abenlux.capture.forward_proxy import serve
+    serve(args.port)
+
+
+def cmd_ca(args) -> None:
+    # print the local CA the proxy uses, so a developer can trust it once.
+    from abenlux.capture.forward_proxy import LocalCA
+    ca = LocalCA()
+    print(f"Abenlux local CA certificate: {ca.cert_path}")
+    print("Trust it once so your tools accept the proxy:")
+    print("  Windows :  certutil -addstore -user Root \"" + str(ca.cert_path) + "\"")
+    print("  macOS   :  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \""
+          + str(ca.cert_path) + "\"")
+    print("  Linux   :  copy it into /usr/local/share/ca-certificates and run update-ca-certificates")
+    print("  Node tools also honor:  NODE_EXTRA_CA_CERTS=" + str(ca.cert_path))
+
+
+def cmd_run(args) -> None:
+    # start the forward proxy, point ONE tool's process at it (and trust the CA for that process only),
+    # then run the tool. only this process tree is proxied, so the browser and everything else is untouched.
+    import os
+    import subprocess
+    import threading
+
+    from abenlux.capture.forward_proxy import make_server
+    server = make_server(args.port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ca = str(server.ca.cert_path)
+    proxy = f"http://127.0.0.1:{args.port}"
+    e = dict(os.environ)
+    e.update(HTTPS_PROXY=proxy, HTTP_PROXY=proxy, https_proxy=proxy, http_proxy=proxy,
+             NODE_EXTRA_CA_CERTS=ca, SSL_CERT_FILE=ca, REQUESTS_CA_BUNDLE=ca)
+    cmd = [args.tool, *args.toolargs]
+    print(f"abenlux: routing {args.tool} through the local proxy on {proxy} (CA {ca})", flush=True)
+    try:
+        rc = subprocess.run(cmd, env=e).returncode
+    except FileNotFoundError:
+        print(f"abenlux: could not find the tool '{args.tool}' on PATH")
+        rc = 127
+    finally:
+        server.shutdown()
+    raise SystemExit(rc)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="abenlux", description="AI spend -> value attribution plane.",
                                 add_help=True)
@@ -719,6 +766,18 @@ def main() -> None:
     sub.add_parser("tiers", help="the tool capability matrix").set_defaults(func=cmd_tiers)
 
     sub.add_parser("mcp", help="run the read plane as an MCP server for coding agents").set_defaults(func=cmd_mcp)
+
+    px = sub.add_parser("proxy", help="forward HTTPS proxy: captures + compresses ANY tool, subscription or key")
+    px.add_argument("--port", type=int, default=8889)
+    px.set_defaults(func=cmd_proxy)
+
+    sub.add_parser("ca", help="print the local CA the proxy uses, and how to trust it").set_defaults(func=cmd_ca)
+
+    rn = sub.add_parser("run", help="run a tool routed through the forward proxy (only that tool, not the browser)")
+    rn.add_argument("--port", type=int, default=8889)
+    rn.add_argument("tool", help="the tool to launch, e.g. claude, codex, aider, gemini")
+    rn.add_argument("toolargs", nargs=argparse.REMAINDER, help="arguments passed through to the tool")
+    rn.set_defaults(func=cmd_run)
 
     o = sub.add_parser("onboard", help="print the exact setup for a tool on your OS/shell")
     o.add_argument("tool", nargs="?", help="tool name, e.g. claude-code, aider, cline")

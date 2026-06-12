@@ -350,3 +350,19 @@ def test_shadow_yield_shows_what_enabling_a_strategy_would_save(tmp_path):
     sh = rep["compression"]["shadow"]
     assert sh["command_trim"]["tokens"] == 2000 and sh["command_trim"]["usd"] >= 0
     s.close()
+
+
+def test_exchange_returns_only_a_percentile_after_enough_orgs(tmp_path):
+    from abenlux.analytics.exchange import ExchangeStore, secure_aggregate
+    ex = ExchangeStore(tmp_path / "ex.db")
+    ex.submit("acme", {"cache_hit": 0.6, "reuse_share": 0.3})
+    ex.submit("globex", {"cache_hit": 0.4, "reuse_share": 0.5})
+    rows = ex.rows()
+    assert secure_aggregate(rows, "acme", k_orgs=3)["ready"] is False    # only 2 orgs, below cohort min
+    ex.submit("initech", {"cache_hit": 0.5, "reuse_share": 0.1})
+    out = secure_aggregate(ex.rows(), "acme", k_orgs=3)
+    assert out["ready"] is True
+    cache = next(c for c in out["comparison"] if c["metric"] == "cache_hit")
+    assert cache["cohort_orgs"] == 3 and 0.0 <= cache["your_percentile"] <= 1.0
+    assert "value" not in cache and "acme" not in str(cache)             # never exposes a raw figure
+    ex.close()

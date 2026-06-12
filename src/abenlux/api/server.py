@@ -76,6 +76,11 @@ def _relay():
     return RelayStore(os.getenv("ABEN_RELAY_DB", "abenlux-relay.db"))
 
 
+def _exchange():
+    from abenlux.analytics.exchange import ExchangeStore
+    return ExchangeStore(os.getenv("ABEN_EXCHANGE_DB", "abenlux-exchange.db"))
+
+
 def _ledger():
     import os
 
@@ -592,6 +597,34 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     ledger.close()
     store.close()
     return rep
+
+
+@app.post("/v1/exchange/submit")
+async def exchange_submit(request: Request, authorization: str | None = Header(default=None)):
+    # an org posts its OWN already-blurred ratios. ingest-token gated, content-free, no raw figures.
+    token = authorization[7:].strip() if (authorization or "").lower().startswith("bearer ") else None
+    if token not in SETTINGS.ingest_tokens:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
+    body = await request.json()
+    org = str(body.get("org", "")).strip()
+    ratios = body.get("ratios") or {}
+    if not org or not isinstance(ratios, dict):
+        raise HTTPException(status_code=400, detail="need org and ratios")
+    ex = _exchange()
+    n = ex.submit(org, ratios)
+    ex.close()
+    return {"submitted": n}
+
+
+@app.get("/api/exchange")
+async def exchange(principal: Principal = Depends(current_principal)):
+    # the cross-org percentile for the caller's OWN org. never another org's figure.
+    _need(principal, Permission.VIEW_AGGREGATES)
+    from abenlux.analytics.exchange import secure_aggregate
+    ex = _exchange()
+    rows = ex.rows()
+    ex.close()
+    return secure_aggregate(rows, principal.org)
 
 
 @app.get("/api/orphans")

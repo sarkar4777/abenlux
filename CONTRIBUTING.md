@@ -10,7 +10,7 @@ behavior ships with tests**.
 git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install        # pip install -e ".[dev]"
-make test           # 315 tests
+make test           # 324 tests
 make lint           # ruff
 make demo           # see the pipeline run with zero setup
 ```

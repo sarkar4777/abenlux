@@ -108,6 +108,27 @@ the real CLIs.
    verified by `test_rbac` + `test_api` (developer → 403 on `/api/report`; `/api/me` returns only the
    caller's rows).
 
+## Two ways to put the agent in front of a tool
+
+There are two shapes the edge agent can take, and they cover every way a tool signs in.
+
+The first is a **reverse proxy**. The tool points its base url at the agent, the agent forwards to the
+real provider, and it rewrites the outbound request on the way for compression. This needs the tool to
+accept a base url, which a tool driven by an API key does, but a tool signed in with a subscription does
+not, because a subscription cannot be redirected like that.
+
+The second is a **forward TLS-terminating proxy** in `capture/forward_proxy.py`. The tool routes through
+the agent as an ordinary HTTPS proxy. The agent owns a tiny local certificate authority (`LocalCA`) that
+mints a short-lived leaf certificate per model API host on demand, so it can present a trusted
+certificate, decrypt the request, run the SAME compression and the SAME capture pipeline the reverse
+proxy uses (`compress_request` then `gateway._capture`), and forward to the real provider with the
+tool's own credential untouched. Two rules bound it. It only terminates TLS for the known model API
+hosts and tunnels every other host straight through unread, and the launcher `abenlux run <tool>` sets
+the proxy and the trusted certificate for just that one process, so the browser and everything else are
+never touched. Because the request is rewritten on the wire here, compression works for a subscription
+tool and a key tool alike, which is why a separate tool-output compressor at the agent's hook layer is
+no longer required. The forward proxy is exercised against the real provider in `examples/proxy-e2e`.
+
 ## The collector is the authoritative trust boundary
 
 The edge runs on the developer's machine, so a buggy or hostile one could forge a record. The collector
@@ -321,7 +342,7 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **315 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
+`make test` runs **324 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
 end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
 upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
 Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full

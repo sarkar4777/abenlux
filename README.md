@@ -11,7 +11,7 @@ coding tool. It even learns your team's intent vocabulary so it gets smarter and
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-315%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-324%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -126,7 +126,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 315 tests
+make test             # 324 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -344,6 +344,29 @@ with `abenlux sync-cursor`.
 In short, if the company hands out a Claude or ChatGPT or Gemini or Copilot subscription, the developer
 uses the telemetry setup and never needs a key. If developers bring their own provider key, they use the
 base url setup. Either way the calls land in the same dashboard.
+
+### The forward proxy. One path that works for any sign-in, with savings
+
+There is a third way that covers everything above in one go, including a subscription tool, and it is the
+only path that can **compress** a subscription tool's request. The tool routes through the agent as an
+ordinary HTTPS proxy. The agent terminates the secure connection with a small local certificate it owns,
+reads the request on the device, redacts and measures it, **shrinks it**, then forwards it to the real
+provider with the tool's own login untouched. The provider sees a valid, smaller request. The tool sees
+a normal answer. Only a content-free record ever leaves the machine.
+
+```
+abenlux ca                  # print the local certificate, trust it once
+abenlux run claude          # run a tool routed through the proxy, only that tool, not the browser
+abenlux run codex
+abenlux run aider
+abenlux proxy               # or run the proxy on its own for IT to push to every machine
+```
+
+Two things make it safe. It only opens the model API hosts, so the browser and every other app are
+passed straight through and never read. And it scopes to the one tool you launch with `abenlux run`, so
+nothing else on the machine is touched. Because the saving now happens right here on the wire for any
+sign-in, **a separate tool-output compressor like RTK is no longer required** for compression to work,
+though abenlux still credits and can wire RTK at the tool layer if you prefer it.
 
 > **Verified end-to-end with the real tools, not mocks of them.** Capture and per-call cost were
 > checked by driving the genuine **Claude Code** (Tier-1 OTel, real session telemetry incl. cache
@@ -604,7 +627,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-315 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
+324 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
 Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
 from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
 test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
@@ -622,7 +645,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 315 tests
+make test       # 324 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

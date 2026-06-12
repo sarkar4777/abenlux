@@ -245,9 +245,16 @@ def cmd_report(args) -> None:
     if args.json:
         print(json.dumps(rep, indent=2))
         return
+    # a brand-new or sub-k tenant has its org-wide scalars suppressed to None. print a clear line
+    # instead of crashing on the number formatting.
+    def _n(v, fmt="{:,}"):
+        return fmt.format(v) if isinstance(v, (int, float)) else "suppressed (below k)"
     print(f"== Abenlux management report (k-anonymity gated)  tenant:{tenant} ==")
-    print(f" actors:{rep['org_actors']}  events:{rep['total_events']}  "
-          f"tokens:{rep['total_tokens']:,}  cost:${rep['total_cost_usd']:,.2f}")
+    print(f" actors:{rep.get('org_actors', 0)}  events:{_n(rep.get('total_events'))}  "
+          f"tokens:{_n(rep.get('total_tokens'))}  cost:{_n(rep.get('total_cost_usd'), '${:,.2f}')}")
+    if not isinstance(rep.get("total_cost_usd"), (int, float)):
+        print(" (this tenant has fewer than the k-anonymity threshold of developers, so its totals are hidden)")
+        return
     val = rep.get("value")
     if val and val.get("merged"):
         cpm = val.get("cost_per_merged_change")

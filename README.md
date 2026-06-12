@@ -37,6 +37,41 @@ and management only ever sees privacy-preserving aggregates.
 (net-new build vs maintenance), new initiatives, orphan spend, drift — all k-anonymized.</em>
 </div>
 
+## What it does, at a glance
+
+Two groups of people, two very different needs. A developer wants their own work to be cheaper, faster,
+and private. A manager wants to know where the money went, whether it paid off, and how to spend less,
+without ever spying on a single person. Abenlux serves both at once, and the tables below say what you
+get and how it is done in plain words.
+
+### For the developer (private to you, never shown to management)
+
+| What you get | What it means for you | How it is done |
+|---|---|---|
+| **Your spend stays yours** | You see your own AI cost and your work mix, and a manager never can | Every prompt is cleaned on your own machine first, and only your own rows are ever shown back to you |
+| **Cheaper calls, automatically** | Your model calls cost less and you change nothing | A small proxy your tool already points at shrinks the request before it is sent, and the safe shrinkers run on their own |
+| **The model reuses your steady prompt** | The unchanging top of your prompt is not charged for again on later turns | We mark where the steady part ends so the provider keeps it in its own cache |
+| **Reuse what the team already solved** | When you start on something already cracked, you see how it was done right away | Your topic is matched to solved work and a small content free card shows which model and tool cracked it |
+| **Ask for help without the wait** | You can ask the person who solved it one question straight away, even across time zones | A double blind relay carries one cleaned question and reply, and neither side sees the other until you both agree |
+| **Quiet waste nudges** | You get a gentle hint when you are stuck in a retry loop or resending the whole history | The proxy watches your own calls for those patterns and tells only you |
+| **Your coding agent can check itself** | The agent can ask, in the middle of a task, am I over budget and has anyone solved this | A small local server gives the agent your own read only views with `abenlux mcp` |
+| **Works with every tool** | Claude Code, Cursor, aider, Cline, Gemini CLI and more, with no switching | Your tool points at a loopback proxy and nothing about your workflow changes |
+
+### For management and finance (only ever grouped numbers, never one person)
+
+| What you get | What it means for you | How it is done |
+|---|---|---|
+| **Every dollar tied to a goal** | You see which project each chunk of AI spend went to, not a guess | The branch or ticket is joined to the objective in your knowledge graph |
+| **Spend turned into value** | You see the return, like dollars per merged change, not just the cost | A content free feed from git or your build system says what shipped, and we join it to spend |
+| **Know what the money is for** | Feature versus fix versus refactor, and new build versus upkeep | The intent of each call is read from the meaningful part of the prompt, on the device |
+| **Budgets that warn early** | A ceiling per goal, a run rate forecast, and a heads up before it breaks | Spend is projected forward per goal and flagged when it is on track to overrun |
+| **Find the hidden waste** | Spend that did not tie to any goal is the headline waste number, and you get proposals to track it | Untracked work about the same thing is grouped and a name is proposed once enough people share it |
+| **Money not spent, counted** | Reuse that avoided redoing work is booked as a saving, shown beside spend | When the broker surfaces solved work the avoided re-solve is valued at a k anonymous cost |
+| **Compare your own regions** | See how your US and EU teams compare on efficiency, safely | Ratios only, blurred with privacy noise, and a percentile within the group |
+| **Compare to other companies** | See your rank against peers without anyone sharing raw numbers | Each company blurs its own numbers at home and the exchange returns only your rank |
+| **A pack for renewals** | The one blended rate you pay across every tool, how concentrated it is, and what a discount would save | Built from the content free spend totals, ready for the negotiation table |
+| **People stay private** | You only ever see grouped numbers, never a single developer | Every aggregate passes a k anonymity gate and no role can ever read one individual |
+
 ### It is a terminal-first tool. Here is real output, captured from a live multi-user run.
 
 > Everything below was produced by an actual run: a mock upstream, a central collector, and

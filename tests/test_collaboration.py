@@ -193,3 +193,16 @@ def test_capsule_store_records_content_free_solution_facts(tmp_path):
     got = cs.get("px-alice", "Checkout retry")
     assert got == facts and cs.get("px-bob", "Checkout retry") is None   # keyed per solver + topic
     cs.close()
+
+
+def test_relay_async_thread_is_double_blind_and_participant_scoped(tmp_path):
+    from abenlux.developer.relay import RelayStore
+    r = RelayStore(tmp_path / "relay.db")
+    tid = r.ask("px-alice", "px-bob", "Checkout retry", "how did you key the idempotency token?")
+    assert r.reply(tid, "px-bob", "on the order id") is True
+    assert r.reply(tid, "px-eve", "i am not in this thread") is False    # only a participant can reply
+    alice = r.for_participant("px-alice")[0]
+    assert alice["messages"][0]["mine"] is True and alice["messages"][1]["mine"] is False
+    assert "peer" in alice                                               # store returns peer, API strips it
+    assert r.for_participant("px-eve") == []                            # outsiders see nothing
+    r.close()

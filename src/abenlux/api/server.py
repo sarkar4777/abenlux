@@ -71,6 +71,11 @@ def _outcomes():
     return OutcomeStore(os.getenv("ABEN_OUTCOME_DB", "abenlux-outcomes.db"))
 
 
+def _relay():
+    from abenlux.developer.relay import RelayStore
+    return RelayStore(os.getenv("ABEN_RELAY_DB", "abenlux-relay.db"))
+
+
 def _ledger():
     import os
 
@@ -461,6 +466,58 @@ async def collab_consent(match_id: int, principal: Principal = Depends(current_p
     mstore.close()
     return {"consented": True, "mutual": mutual,
             "peer_revealed": card.get("name") if card else None, "peer_contact": card}
+
+
+@app.post("/api/collab/{match_id}/ask")
+async def collab_ask(match_id: int, request: Request, principal: Principal = Depends(current_principal)):
+    # send the matched peer one redacted question now, without waiting for a mutual intro. double-blind.
+    _need(principal, Permission.VIEW_OWN)
+    from abenlux.processing.redact import redact
+    body = await request.json()
+    text = redact(str(body.get("text", ""))[:4000]).text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="empty question")
+    mstore = _matches()
+    owned = {m["id"]: m for m in mstore.for_owner(principal.pseudonym)}
+    mstore.close()
+    if match_id not in owned:
+        raise HTTPException(status_code=404, detail="match not found for this principal")
+    relay = _relay()
+    tid = relay.ask(principal.pseudonym, owned[match_id]["peer"], owned[match_id]["topic"], text)
+    relay.close()
+    return {"thread_id": tid, "sent": True}
+
+
+@app.get("/api/threads")
+async def get_threads(principal: Principal = Depends(current_principal)):
+    # the developer's own help threads. the peer stays hidden unless both opted in on that topic.
+    _need(principal, Permission.VIEW_OWN)
+    relay = _relay()
+    mstore = _matches()
+    threads = relay.for_participant(principal.pseudonym)
+    for t in threads:
+        revealed = mstore.mutually_consented(principal.pseudonym, t["peer"], t["topic"])
+        t["peer_revealed"] = revealed
+        t.pop("peer", None)                  # never expose the raw peer pseudonym to the client
+    relay.close()
+    mstore.close()
+    return {"threads": threads}
+
+
+@app.post("/api/thread/{thread_id}/reply")
+async def thread_reply(thread_id: int, request: Request, principal: Principal = Depends(current_principal)):
+    _need(principal, Permission.VIEW_OWN)
+    from abenlux.processing.redact import redact
+    body = await request.json()
+    text = redact(str(body.get("text", ""))[:4000]).text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="empty reply")
+    relay = _relay()
+    ok = relay.reply(thread_id, principal.pseudonym, text)
+    relay.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="thread not found for this principal")
+    return {"replied": True}
 
 
 @app.get("/api/contact")

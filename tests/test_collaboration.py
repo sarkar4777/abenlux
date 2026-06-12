@@ -181,3 +181,15 @@ def test_semantic_threshold_out_of_range_is_ignored(tmp_path):
     p.write_text("objectives:\n  - {id: o1, label: One}\nsemantic_threshold: 0\n", encoding="utf-8")
     kg = KnowledgeGraph.from_yaml(str(p))
     assert kg.semantic_threshold == 0.55     # kept the safe default, ignored the invalid 0
+
+
+def test_capsule_store_records_content_free_solution_facts(tmp_path):
+    from abenlux.developer.capsules import CapsuleStore, cost_band
+    assert cost_band(0) == "unknown" and cost_band(0.4) == "under $1" and cost_band(9) == "$5 to $20"
+    cs = CapsuleStore(tmp_path / "cap.db")
+    facts = cs.record_solved("px-alice", "Checkout retry", work_type="feature",
+                             model="claude-haiku-4-5", tool="claude-code", retry_loops=2, usd=3.0)
+    assert facts["cost_band"] == "$1 to $5" and facts["model"] == "claude-haiku-4-5"
+    got = cs.get("px-alice", "Checkout retry")
+    assert got == facts and cs.get("px-bob", "Checkout retry") is None   # keyed per solver + topic
+    cs.close()

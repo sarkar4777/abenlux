@@ -59,6 +59,13 @@ def _contacts():
     return ContactStore(os.getenv("ABEN_CONTACT_DB", "abenlux-contacts.db"))
 
 
+def _capsules():
+    import os
+
+    from abenlux.developer.capsules import CapsuleStore
+    return CapsuleStore(os.getenv("ABEN_CAPSULE_DB", "abenlux-capsules.db"))
+
+
 def _ledger():
     import os
 
@@ -197,6 +204,7 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
     mstore = _matches()
     ledger = _ledger()
     tenants = _tenants()
+    capsules = _capsules()
     org_cache: dict[str, str] = {}     # tenant_id -> org/residency, resolved once per batch (broker walls)
     identity = _ingest_identity_index()  # {pseudonym: Principal} or None (no per-actor binding configured)
     n, rejected = 0, 0
@@ -217,11 +225,12 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
             _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
             store.insert(rec)
             _match_centrally(rec, mstore, ledger, _org_for(rec, tenants, org_cache),
-                             _residency_for(rec, tenants, org_cache))
+                             _residency_for(rec, tenants, org_cache), capsules=capsules)
         except Exception:
             rejected += 1
             continue
         n += 1
+    capsules.close()
     tenants.close()
     ledger.close()
     mstore.close()
@@ -281,7 +290,7 @@ def _valid_embedding(emb) -> bool:
 
 
 def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: str = "default",
-                     residency: str = "eu") -> None:
+                     residency: str = "eu", capsules=None) -> None:
     # double-blind matching at the collector over content-free signals. writes one row per side,
     # each owner sees only their own. management never sees this - it is not a report.
     if not rec.embedding or not rec.objective_id or not rec.actor_pseudonym:
@@ -290,15 +299,30 @@ def _match_centrally(rec: DerivedRecord, mstore: MatchStore, ledger=None, org: s
         return
     obj = _kg.objectives.get(rec.objective_id)
     tenant = getattr(rec, "tenant_id", None) or "default"
+    topic = rec.objective_label or "general"
+    # a clean call is treated as a solved piece of work that others can reuse. a retry loop is a
+    # developer still thrashing, so it is not yet a solved pattern. this is what lets a later developer
+    # match already-cracked work as reuse instead of only catching two people working live at once.
+    solved = not getattr(rec, "is_retry_loop", False)
     sig = TopicSignal(
         actor_pseudonym=rec.actor_pseudonym, topic_embedding=rec.embedding,
-        topic_label=rec.objective_label or "general", client=getattr(obj, "client", None),
+        topic_label=topic, client=getattr(obj, "client", None),
         residency=residency,                                # registry-authoritative, not edge-supplied
         org=org,                                            # enforce the org wall centrally
         # only a KG-RESOLVED objective is a trusted same-objective key (None for an unknown/forged id,
         # which then needs the stricter cross-objective bar instead of the spoofable label).
         objective_id=rec.objective_id if obj is not None else None,
+        is_solved=solved,
     )
+    # remember how this developer cracked this topic so a future matcher gets actionable, content-free
+    # help at match time. only on a KG-resolved objective, so a forged id cannot seed the corpus.
+    if solved and obj is not None and capsules is not None:
+        try:
+            capsules.record_solved(rec.actor_pseudonym, topic, work_type=rec.work_type or "unknown",
+                                   model=rec.request_model or "unknown", tool=rec.tool or "unknown",
+                                   retry_loops=0, usd=rec.cost_usd or 0.0, ts=rec.ts)
+        except Exception:
+            pass
     for m in _broker.submit(sig):
         mstore.record(m.a, m.b, m.topic, m.similarity, m.mode)
         mstore.record(m.b, m.a, m.topic, m.similarity, m.mode)
@@ -344,6 +368,7 @@ async def me(principal: Principal = Depends(current_principal)):
     store.close()
     mstore = _matches()
     contacts = _contacts()
+    capsules = _capsules()
     raw_matches = mstore.for_owner(principal.pseudonym, max_age_s=_MATCH_TTL_S)  # drop stale pairings
     matches = []
     for m in raw_matches:
@@ -354,13 +379,19 @@ async def me(principal: Principal = Depends(current_principal)):
             # identity AND contact handles revealed only after BOTH opted in, on this topic
             card = _peer_card(m["peer"], contacts)
             revealed = card.get("name")
+        # on a reuse match the peer already solved this. attach their content-free solution capsule (which
+        # model and tool cracked it, how many retry loops, a coarse cost band) so the developer gets
+        # actionable help right now, before any intro. the capsule holds no code and no prompt.
+        capsule = capsules.get(m["peer"], m["topic"]) if m["mode"] == "solved_reuse" else None
         matches.append({
             "id": m["id"], "topic": m["topic"], "similarity": m["similarity"],
             "mode": m["mode"], "peer_revealed": revealed, "peer_contact": card,
             "you_requested": mstore.has_consented(principal.pseudonym, m["peer"], m["topic"]),
+            "capsule": capsule,
         })
     mstore.close()
     contacts.close()
+    capsules.close()
     rep["collaboration_matches"] = matches
     return rep
 

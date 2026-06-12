@@ -20,7 +20,9 @@ def negotiation_pack(store: DerivedStore, *, tenant: str | None = None, k: int =
         return {"ready": False, "reason": f"needs at least {k} developers to release a spend figure"}
 
     blended = round(cost / (tokens / 1_000_000), 2) if tokens else 0.0   # dollars per million tokens
-    by_provider = store.rollup("provider", tenant=tenant)
+    # each row is k-anonymity gated on its own developer count. a provider or model used by fewer than
+    # the threshold of developers would otherwise expose that developer's exact spend, so it is dropped.
+    by_provider = [p for p in store.rollup("provider", tenant=tenant) if p.get("actors", 0) >= k]
     providers = []
     for p in by_provider:
         share = (p["cost"] / cost) if cost else 0.0
@@ -35,7 +37,7 @@ def negotiation_pack(store: DerivedStore, *, tenant: str | None = None, k: int =
     scenarios = [{"discount_pct": d, "annual_saving_usd": round(annual * d / 100, 2)}
                  for d in (10, 20, 30)]
 
-    by_model = store.rollup("model", tenant=tenant)
+    by_model = [m for m in store.rollup("model", tenant=tenant) if m.get("actors", 0) >= k]
     top_models = sorted(({"model": m["label"], "cost_usd": round(m["cost"], 2),
                           "tokens": m["tokens"]} for m in by_model),
                         key=lambda r: -r["cost_usd"])[:8]

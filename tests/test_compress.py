@@ -407,3 +407,24 @@ def test_compression_block_is_suppressed_below_k(tmp_path):
     cz = management_report(s, k=5)["compression"]
     assert cz == {"suppressed": True}        # savings are an org figure, hidden below the k threshold
     s.close()
+
+
+def test_negotiation_drops_single_developer_provider_and_model(tmp_path):
+    from abenlux.analytics.negotiation import negotiation_pack
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "ng.db")
+    for i in range(5):                       # 5 developers on anthropic -> shown
+        s.insert(DerivedRecord(event_id=f"a{i}", ts=1.0, tier="t", provider="anthropic", actor_pseudonym=f"a{i}",
+                               request_model="claude-opus-4-8", input_tokens=100000, output_tokens=0,
+                               duplicate_history_tokens=0, cost_usd=0.5))
+    # one lone developer on google -> would leak their spend, must be dropped from the per-provider rows
+    s.insert(DerivedRecord(event_id="g0", ts=1.0, tier="t", provider="google", actor_pseudonym="g0",
+                           request_model="gemini-2.5-flash", input_tokens=999999, output_tokens=0,
+                           duplicate_history_tokens=0, cost_usd=9.99))
+    pack = negotiation_pack(s, k=5)
+    provs = {p["provider"] for p in pack["by_provider"]}
+    models = {m["model"] for m in pack["top_models"]}
+    assert "anthropic" in provs and "google" not in provs      # the single-dev provider is suppressed
+    assert "gemini-2.5-flash" not in models                    # and the single-dev model too
+    s.close()

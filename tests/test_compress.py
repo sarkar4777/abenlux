@@ -284,7 +284,7 @@ def test_value_numerator_joins_outcomes_to_spend(tmp_path):
         oc.record({"outcome_id": f"o{i}", "objective_id": "O", "merged": 1,
                    "lines_added": 50, "lines_removed": 10})
     oc.record({"outcome_id": "o9", "objective_id": "O", "merged": 0, "reverted": 1})
-    rep = management_report(s, k=5, outcomes=oc.by_objective(None))
+    rep = management_report(s, k=5, outcomes=oc.by_objective())
     v = rep["value"]
     assert v["merged"] == 4 and v["changes"] == 5 and v["merge_rate"] == 0.8
     assert v["cost_per_merged_change"] == 2.5      # $10 spend / 4 merged
@@ -366,3 +366,29 @@ def test_exchange_returns_only_a_percentile_after_enough_orgs(tmp_path):
     assert cache["cohort_orgs"] == 3 and 0.0 <= cache["your_percentile"] <= 1.0
     assert "value" not in cache and "acme" not in str(cache)             # never exposes a raw figure
     ex.close()
+
+
+def test_value_only_counts_objectives_the_tenant_spent_on(tmp_path):
+    # a merged change for one tenant's objective must never show in another tenant's value line
+    from abenlux.analytics.outcomes import OutcomeStore
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "c.db")
+    for i in range(3):                       # acme-eu spent on obj-acme
+        s.insert(DerivedRecord(event_id=f"a{i}", ts=1.0, tier="t", provider="anthropic", actor_pseudonym=f"a{i}",
+                               request_model="m", input_tokens=1000, output_tokens=10, duplicate_history_tokens=0,
+                               cost_usd=1.0, tenant_id="acme-eu", objective_id="obj-acme", objective_label="Acme"))
+    for i in range(3):                       # acme-us spent on obj-zenith
+        s.insert(DerivedRecord(event_id=f"b{i}", ts=1.0, tier="t", provider="anthropic", actor_pseudonym=f"b{i}",
+                               request_model="m", input_tokens=1000, output_tokens=10, duplicate_history_tokens=0,
+                               cost_usd=1.0, tenant_id="acme-us", objective_id="obj-zenith", objective_label="Zenith"))
+    oc = OutcomeStore(tmp_path / "o.db")
+    oc.record({"outcome_id": "x", "objective_id": "obj-acme", "merged": 1})   # no tenant tag
+    by = oc.by_objective()
+    repA = management_report(s, k=3, tenant="acme-eu", outcomes=by)
+    repB = management_report(s, k=3, tenant="acme-us", outcomes=by)
+    assert repA["value"]["merged"] == 1                      # acme-eu spent on obj-acme, so it counts
+    assert (repB["value"] or {}).get("merged", 0) == 0       # acme-us did not, so it never leaks in
+    oc.close()
+    s.close()

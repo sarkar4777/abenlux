@@ -171,6 +171,14 @@ class _BaseStore:
         raise NotImplementedError
 
     # ----- aggregate reads (gated by k-anonymity in analytics) -----
+    def objective_ids(self, tenant: str | None = None) -> set:
+        # the distinct objectives this tenant actually spent on. used to scope the value join so one
+        # tenant's shipped-work outcomes never count toward another tenant.
+        pred, params = self._tenant_pred(tenant)
+        where = " WHERE objective_id IS NOT NULL" + (f" AND {pred}" if pred else "")
+        rows = self._rows(self._exec("SELECT DISTINCT objective_id AS oid FROM derived" + where, params))
+        return {r["oid"] for r in rows if r.get("oid")}
+
     def orphan_token_share(self, tenant: str | None = None) -> float:
         pred, params = self._tenant_pred(tenant)
         cur = self._exec(

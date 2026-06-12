@@ -587,7 +587,7 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     scope = _resolve_report_tenant(principal, tenant)
     store = _store()
     outcomes = _outcomes()
-    by_obj = outcomes.by_objective(scope)
+    by_obj = outcomes.by_objective()
     outcomes.close()
     rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=_kg,
                             tenant=scope, outcomes=by_obj)

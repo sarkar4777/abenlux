@@ -233,7 +233,7 @@ def cmd_report(args) -> None:
 
     from abenlux.analytics.outcomes import OutcomeStore
     _oc = OutcomeStore(_os.getenv("ABEN_OUTCOME_DB", "abenlux-outcomes.db"))
-    _by_obj = _oc.by_objective(tenant)
+    _by_obj = _oc.by_objective()
     _oc.close()
     rep = management_report(store, k=SETTINGS.k_anon, dp_epsilon=SETTINGS.dp_epsilon, kg=kg,
                             tenant=tenant, outcomes=_by_obj)

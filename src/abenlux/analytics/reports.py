@@ -98,11 +98,15 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
     # spend. only released when the whole org clears k, the same wall the dollar total sits behind.
     value = None
     if outcomes and org_clears_k:
-        merged = sum(v.get("merged", 0) for v in outcomes.values())
-        reverted = sum(v.get("reverted", 0) for v in outcomes.values())
-        changes = sum(v.get("changes", 0) for v in outcomes.values())
-        added = sum(v.get("lines_added", 0) for v in outcomes.values())
-        removed = sum(v.get("lines_removed", 0) for v in outcomes.values())
+        # only count outcomes for the objectives THIS tenant actually spent on. a merged change for an
+        # objective another tenant owns never shows up here, even if the outcome carried no tenant tag.
+        spent = store.objective_ids(tenant)
+        relevant = {oid: v for oid, v in outcomes.items() if oid in spent}
+        merged = sum(v.get("merged", 0) for v in relevant.values())
+        reverted = sum(v.get("reverted", 0) for v in relevant.values())
+        changes = sum(v.get("changes", 0) for v in relevant.values())
+        added = sum(v.get("lines_added", 0) for v in relevant.values())
+        removed = sum(v.get("lines_removed", 0) for v in relevant.values())
         value = {
             "changes": changes, "merged": merged, "reverted": reverted,
             "merge_rate": round(merged / changes, 3) if changes else None,

@@ -54,18 +54,15 @@ class OutcomeStore:
         self.conn.commit()
         return True
 
-    def by_objective(self, tenant: str | None = None) -> dict:
-        # roll the outcome facts up per objective so the report can join them to spend. a merged change
-        # is an org-level fact, so an outcome with no tenant counts toward any tenant that spent on its
-        # objective. the report only attaches value for objectives the tenant actually spent on.
-        where, params = "", ()
-        if tenant is not None:
-            where = " WHERE (tenant_id=? OR tenant_id IS NULL)"
-            params = (tenant,)
+    def by_objective(self) -> dict:
+        # roll the outcome facts up per objective. outcomes are keyed by objective, not by tenant, so a
+        # merged change is an org-level fact. the report decides which of these objectives belong to a
+        # tenant by intersecting with the objectives that tenant actually spent on, which is what keeps
+        # one tenant's shipped work from showing up in another tenant's value line.
         rows = self.conn.execute(
             "SELECT objective_id, COUNT(*) n, COALESCE(SUM(merged),0), COALESCE(SUM(reverted),0),"
             " COALESCE(SUM(lines_added),0), COALESCE(SUM(lines_removed),0)"
-            " FROM outcomes" + where + " GROUP BY objective_id", params).fetchall()
+            " FROM outcomes GROUP BY objective_id").fetchall()
         out = {}
         for oid, n, merged, reverted, added, removed in rows:
             out[oid] = {"changes": n, "merged": merged, "reverted": reverted,

@@ -1,0 +1,23 @@
+principals:
+- token: boss
+  subject: boss
+  role: manager
+  tenant_id: acme
+  org: acme
+- token: admin
+  subject: admin
+  role: admin
+  tenant_id: acme
+  org: acme
+- token: alice
+  subject: alice
+  role: developer
+  tenant_id: acme
+  org: acme
+  slack: '@alice'
+- token: bob
+  subject: bob
+  role: developer
+  tenant_id: acme
+  org: acme
+  slack: '@bob'

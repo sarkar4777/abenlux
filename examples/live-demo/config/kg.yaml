@@ -1,0 +1,4 @@
+objectives:
+  - {id: obj-app, label: "Acme App", kind: client, client: acme, monthly_budget_usd: 20}
+ticket_prefix_to_objective:
+  APP: obj-app

@@ -24,3 +24,7 @@ examples/compression-e2e/evidence/
 
 # local-only marketing draft (kept on disk, not published)
 examples/compression-e2e/LINKEDIN.md
+
+# live-demo runtime data (regenerated on each run)
+examples/live-demo/.run/
+examples/live-demo/.verify/

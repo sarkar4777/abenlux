@@ -216,7 +216,12 @@ class _Forwarder:
         except Exception:
             pass
 
-        fwd = {k: v for k, v in headers.items() if k not in _HOP}
+        # abenlux-internal headers (a wrapper may stamp the developer, tool, and branch) are read for
+        # attribution and then DROPPED, so they never reach the provider.
+        ov = {"tool": headers.get("x-aben-tool") or "proxy", "actor": headers.get("x-aben-actor"),
+              "branch": headers.get("x-aben-branch"), "repo": headers.get("x-aben-repo"),
+              "ticket": headers.get("x-aben-ticket")}
+        fwd = {k: v for k, v in headers.items() if k not in _HOP and not k.startswith("x-aben-")}
         fwd["accept-encoding"] = "identity"        # we tee the body, so ask the provider not to compress
         url = self._base(host) + path
         captured = bytearray()
@@ -250,7 +255,6 @@ class _Forwarder:
         def _cap():
             try:
                 from abenlux.capture import gateway as gw
-                ov = {"tool": "proxy"}
                 gw._capture(provider, req_json, bytes(captured), streamed, latency, ov, response_api, compress_info)
             except Exception:
                 pass

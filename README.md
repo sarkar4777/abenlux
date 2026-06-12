@@ -318,6 +318,33 @@ exact copy-paste setup for your tool and OS.** Concretely:
 
 Confirm it's working: run a prompt in your tool, then `abenlux me` — your call appears, privately.
 
+### Subscription or API key, and which tool fits which
+
+How a tool is captured depends on how the developer signs in. There are three modes, and every tool the
+project tests falls into one. A subscription login cannot be routed through a custom base url, so the
+tools built for a subscription use a telemetry path or a vendor report instead. The dashboard treats all
+three the same, and IT can push any of them to every machine at once with `abenlux agent install`.
+
+**Telemetry tools. A subscription works, no API key, nothing intercepts the call.** The tool turns on its
+own OpenTelemetry and reports its usage to the agent, so it never matters how the tool signs in. This
+covers **Claude Code**, **OpenAI Codex** (`[otel]` in `~/.codex/config.toml`), **Gemini CLI**, and
+**VS Code Copilot chat**. You get spend, attribution, budgets, and the spend to value line out of the
+box. Prompt content stays off unless the tool is told to send it, so collaboration matching is the one
+feature that needs content turned on.
+
+**Base url tools. You bring a provider API key.** These open tools point at whatever key you give them,
+so the agent sits in the middle and sees the full request, which also gives collaboration matching for
+free. This covers **aider**, **Cline**, **Roo**, **Kilo**, **Continue**, **opencode**, **Crush**,
+**Droid**, **ForgeCode**, **Goose**, and any tool against **Azure OpenAI**.
+
+**Vendor report tools. Nothing on the device.** **Cursor** and **Copilot inline** build the prompt on
+their own servers, so there is nothing local to capture. IT pulls the usage from the vendor admin api
+with `abenlux sync-cursor`.
+
+In short, if the company hands out a Claude or ChatGPT or Gemini or Copilot subscription, the developer
+uses the telemetry setup and never needs a key. If developers bring their own provider key, they use the
+base url setup. Either way the calls land in the same dashboard.
+
 > **Verified end-to-end with the real tools, not mocks of them.** Capture and per-call cost were
 > checked by driving the genuine **Claude Code** (Tier-1 OTel, real session telemetry incl. cache
 > tokens), **Gemini CLI**, **OpenAI Codex** (Responses API), **aider** (against a real Azure gpt-4o,

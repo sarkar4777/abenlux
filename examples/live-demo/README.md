@@ -43,8 +43,11 @@ It prints the exact steps. The short version is below.
 
 ## Notes
 
-- Claude Code must use an Anthropic API key here. A subscription login does not route through a custom
-  base url.
+- This demo uses the base url path, so each window's Claude Code must use an Anthropic API key. A
+  subscription login cannot be routed through a custom base url. In a real company on subscriptions you
+  use the telemetry path instead, where the tool reports its own usage to the agent and no key is needed.
+  See the section "Subscription or API key, and which tool fits which" in the main README. Each employee
+  is on their own machine there, so the two identities sort themselves out without the two-gateway trick.
 - Everything stays on your machine. Only content-free records leave each gateway, and they go to your
   own collector on `127.0.0.1`, nowhere else.
 - Press Ctrl C in the start window to stop everything.

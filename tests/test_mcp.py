@@ -28,3 +28,25 @@ def test_my_spend_requires_a_valid_token(monkeypatch):
 
 def test_tool_registry_exposes_the_four_tools():
     assert set(TOOLS) == {"my_spend", "check_reuse", "attribute", "cost_estimate"}
+
+
+def test_check_reuse_reads_the_configured_stores_and_joins_the_capsule(tmp_path, monkeypatch):
+    # the agent tool must read the developer's real match and capsule stores, not an empty cwd file
+    from abenlux.auth.principals import load_principals
+    from abenlux.developer.capsules import CapsuleStore
+    from abenlux.developer.matches import MatchStore
+    from abenlux.mcp_server import tool_check_reuse
+    monkeypatch.delenv("ABEN_PRINCIPALS", raising=False)
+    me = load_principals().resolve("dev-token").pseudonym
+    monkeypatch.setenv("ABEN_MATCH_DB", str(tmp_path / "m.db"))
+    monkeypatch.setenv("ABEN_CAPSULE_DB", str(tmp_path / "c.db"))
+    ms = MatchStore(str(tmp_path / "m.db"))
+    ms.record(me, "peer-px", "Checkout retry", 0.95, "solved_reuse")
+    ms.close()
+    cs = CapsuleStore(str(tmp_path / "c.db"))
+    cs.record_solved("peer-px", "Checkout retry", work_type="feature", model="claude-haiku-4-5",
+                     tool="claude-code", retry_loops=1, usd=2.0)
+    cs.close()
+    out = tool_check_reuse(token="dev-token")
+    assert out["matches"] and out["matches"][0]["mode"] == "solved_reuse"
+    assert out["matches"][0]["capsule"]["model"] == "claude-haiku-4-5"

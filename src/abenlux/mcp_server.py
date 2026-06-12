@@ -26,9 +26,14 @@ def _principal(token: str | None):
     return p
 
 
+_MATCH_TTL_S = float(os.getenv("ABEN_MATCH_TTL_DAYS", "14")) * 86400
+
+
 def _store():
-    from abenlux.store import DerivedStore
-    return DerivedStore(os.getenv("ABEN_DB", "abenlux.db"))
+    # the developer's OWN on-device store, opened the same way the rest of the tool opens it (which
+    # honors a Postgres backend too), not a fresh cwd-relative sqlite file.
+    from abenlux.store import open_store
+    return open_store(SETTINGS.local_db)
 
 
 def tool_my_spend(token: str | None = None) -> dict:
@@ -48,10 +53,12 @@ def tool_check_reuse(token: str | None = None) -> dict:
     from abenlux.developer.capsules import CapsuleStore
     from abenlux.developer.matches import MatchStore
     p = _principal(token)
-    mstore = MatchStore(os.getenv("ABEN_MATCH_DB", "abenlux-matches.db"))
-    caps = CapsuleStore(os.getenv("ABEN_CAPSULE_DB", "abenlux-capsules.db"))
+    # pass None when unset so these resolve to the developer's private ~/.abenlux stores, the same place
+    # the gateway wrote them, not a stray empty file in the agent's working directory.
+    mstore = MatchStore(os.getenv("ABEN_MATCH_DB"))
+    caps = CapsuleStore(os.getenv("ABEN_CAPSULE_DB"))
     out = []
-    for m in mstore.for_owner(p.pseudonym):
+    for m in mstore.for_owner(p.pseudonym, max_age_s=_MATCH_TTL_S):   # drop stale pairings, like the web view
         capsule = caps.get(m["peer"], m["topic"]) if m["mode"] == "solved_reuse" else None
         out.append({"topic": m["topic"], "mode": m["mode"], "similarity": m["similarity"],
                     "capsule": capsule})

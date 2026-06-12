@@ -594,6 +594,18 @@ async def report(tenant: str | None = None, principal: Principal = Depends(curre
     return rep
 
 
+@app.get("/api/orphans")
+async def orphans(tenant: str | None = None, principal: Principal = Depends(current_principal)):
+    # proposals to name groups of unattributed spend, so it stops being orphan. management view, k-gated.
+    _need(principal, Permission.VIEW_AGGREGATES)
+    from abenlux.analytics.recovery import recover_orphans
+    scope = _resolve_report_tenant(principal, tenant)
+    store = _store()
+    out = recover_orphans(store, tenant=scope, k=SETTINGS.k_anon)
+    store.close()
+    return out
+
+
 @app.get("/api/negotiation")
 async def negotiation(tenant: str | None = None, principal: Principal = Depends(current_principal)):
     # the renewal pack. the blended rate the org pays across every tool, how concentrated the spend is,

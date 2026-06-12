@@ -272,6 +272,9 @@ def cmd_report(args) -> None:
               f"{cz.get('cache_hits', 0)} calls served from cache  (edge compression layer)")
         for name, d in (cz.get("by_strategy") or {}).items():
             print(f"   - {name:18} {d['tokens']:>10,} tokens  (~${d['usd']:,.2f})")
+    for name, d in (cz.get("shadow") or {}).items():
+        if d.get("usd", 0) >= 0.01:
+            print(f" would save : enabling {name} would save ~{d['tokens']:,} tokens (~${d['usd']:,.2f})")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
     trend = rep.get("trend")

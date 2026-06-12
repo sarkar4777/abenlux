@@ -89,6 +89,10 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         "cache_hits": totals.get("cache_hits", 0),
         "by_strategy": {k: {"tokens": v, "usd": round(v * blended, 2)}
                         for k, v in sorted(by_strategy.items(), key=lambda kv: -kv[1])},
+        # what the off-by-default strategies WOULD save if enabled, measured live, so a manager can turn
+        # one on with evidence instead of a guess. it is a what-if, not realized savings.
+        "shadow": {k: {"tokens": v, "usd": round(v * blended, 2)}
+                   for k, v in sorted(store.shadow_breakdown(tenant).items(), key=lambda kv: -kv[1])},
     }
     # value: join the content-free outcome feed to spend so the report shows return on spend, not just
     # spend. only released when the whole org clears k, the same wall the dollar total sits behind.

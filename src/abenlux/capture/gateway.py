@@ -403,6 +403,24 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
                 result.record.cache_read_tokens = 0
                 result.record.cache_creation_tokens = 0
                 result.record.cost_usd, result.record.cost_priced = 0.0, True
+        # shadow-measure the strategies that are OFF, so the report can show what enabling each would
+        # save without ever changing this call. runs here in the background, off the hot path.
+        if not result.record.served_from_cache and isinstance(req_json, dict):
+            try:
+                from abenlux.compress import compress_request, enabled_strategies
+                from abenlux.compress import strategies as _all_strategies
+                on = {s.name for s in enabled_strategies(getattr(SETTINGS, "compress", None))}
+                shadow = {}
+                for name, strat in _all_strategies().items():
+                    if name in on or not strat.rewrites_prompt:
+                        continue
+                    cres = compress_request(req_json, provider.value, [strat])
+                    if cres.saved_tokens > 0:
+                        shadow[name] = cres.saved_tokens
+                if shadow:
+                    result.record.shadow_savings = json.dumps(shadow)
+            except Exception:
+                _log_capture_error("shadow")
         _sink.insert(result.record)  # forward to collector or write the shared store
         if _dev_store is not _store:  # solo mode already wrote via the sink's SqliteSink (same store)
             _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph

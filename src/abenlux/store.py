@@ -51,7 +51,7 @@ _COLUMNS = [
     "objective_id", "objective_label", "is_orphan",
     "attribution_method", "attribution_confidence",
     "ticket_id", "work_type", "work_type_source", "residency", "tenant_id",
-    "saved_input_tokens", "compression", "compression_detail", "served_from_cache",
+    "saved_input_tokens", "compression", "compression_detail", "shadow_savings", "served_from_cache",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -71,7 +71,7 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           attribution_method TEXT, attribution_confidence {real_type},
           ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT, tenant_id TEXT,
           saved_input_tokens {int_type}, compression TEXT, compression_detail TEXT,
-          served_from_cache {int_type}
+          shadow_savings TEXT, served_from_cache {int_type}
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
@@ -105,7 +105,8 @@ def _values(r: DerivedRecord) -> tuple:
         r.objective_id, r.objective_label, int(r.is_orphan),
         r.attribution_method, r.attribution_confidence,
         r.ticket_id, r.work_type, r.work_type_source, r.residency, r.tenant_id,
-        r.saved_input_tokens, r.compression, r.compression_detail, int(r.served_from_cache),
+        r.saved_input_tokens, r.compression, r.compression_detail, r.shadow_savings,
+        int(r.served_from_cache),
     )
 
 
@@ -180,6 +181,26 @@ class _BaseStore:
         total, orphan = cur.fetchone()
         return (orphan / total) if total else 0.0
 
+    def orphan_samples(self, tenant: str | None = None, limit: int = 2000) -> list[dict]:
+        # the unattributed records that carry an embedding, so the recovery loop can cluster them and
+        # propose a new objective. content-free fields only (vector, repo, actor pseudonym, cost).
+        pred, params = self._tenant_pred(tenant)
+        where = " WHERE is_orphan=1 AND embedding IS NOT NULL" + (f" AND {pred}" if pred else "")
+        rows = self._rows(self._exec(
+            "SELECT embedding, repo, actor_pseudonym, cost_usd, input_tokens, output_tokens"
+            " FROM derived" + where + f" LIMIT {int(limit)}", params))
+        out = []
+        for r in rows:
+            try:
+                vec = json.loads(r["embedding"]) if r.get("embedding") else None
+            except (ValueError, TypeError):
+                vec = None
+            if isinstance(vec, list) and vec:
+                out.append({"embedding": vec, "repo": r.get("repo"), "actor": r.get("actor_pseudonym"),
+                            "cost": r.get("cost_usd") or 0.0,
+                            "tokens": (r.get("input_tokens") or 0) + (r.get("output_tokens") or 0)})
+        return out
+
     def totals(self, tenant: str | None = None) -> dict:
         pred, params = self._tenant_pred(tenant)
         return self._row(self._exec(
@@ -196,15 +217,23 @@ class _BaseStore:
             "FROM derived" + self._and(pred), params
         ))
 
+    def shadow_breakdown(self, tenant: str | None = None) -> dict:
+        """sum the per-strategy tokens that the OFF-by-default strategies WOULD have removed, so the
+        report can show what enabling each one would save. content-free token counts only."""
+        return self._sum_json_map("shadow_savings", tenant)
+
     def compression_breakdown(self, tenant: str | None = None) -> dict:
         """sum the per-strategy tokens removed across records, by parsing the content-free JSON map each
         record carries. returns {strategy: tokens}. used to attribute compression yield by technique."""
+        return self._sum_json_map("compression_detail", tenant)
+
+    def _sum_json_map(self, col: str, tenant: str | None) -> dict:
         pred, params = self._tenant_pred(tenant)
-        where = " WHERE compression_detail IS NOT NULL" + (f" AND {pred}" if pred else "")
-        rows = self._rows(self._exec("SELECT compression_detail FROM derived" + where, params))
+        where = f" WHERE {col} IS NOT NULL" + (f" AND {pred}" if pred else "")
+        rows = self._rows(self._exec(f"SELECT {col} AS m FROM derived" + where, params))
         out: dict = {}
         for r in rows:
-            raw = r.get("compression_detail")
+            raw = r.get("m")
             if not raw:
                 continue
             try:

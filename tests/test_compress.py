@@ -313,3 +313,40 @@ def test_negotiation_pack_blended_rate_and_k_gate(tmp_path):
     assert pack["provider_concentration"] == 1.0        # all anthropic
     assert pack["committed_use_scenarios"][0]["discount_pct"] == 10
     s.close()
+
+
+def test_orphan_recovery_proposes_a_named_objective_for_a_shared_cluster(tmp_path):
+    from abenlux.analytics.recovery import recover_orphans
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "r.db")
+    vec = [0.1, 0.2, 0.3, 0.4]
+    for i in range(5):                       # 5 developers, same topic, all orphan, same repo
+        s.insert(DerivedRecord(event_id=f"o{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="m", input_tokens=1000,
+                               output_tokens=0, duplicate_history_tokens=0, cost_usd=1.0,
+                               is_orphan=True, embedding=vec, repo="acme/checkout"))
+    out = recover_orphans(s, k=5)
+    assert out["proposals"] and out["proposals"][0]["developers"] == 5
+    assert out["proposals"][0]["suggested_repo"] == "acme/checkout"
+    assert recover_orphans(s, k=6)["proposals"] == []     # below the k threshold -> nothing surfaced
+    s.close()
+
+
+def test_shadow_yield_shows_what_enabling_a_strategy_would_save(tmp_path):
+    import json as _json
+
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "sh.db")
+    for i in range(5):
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic",
+                               actor_pseudonym=f"a{i}", request_model="claude-opus-4-8",
+                               input_tokens=1000, output_tokens=100, duplicate_history_tokens=0,
+                               cost_usd=2.0, objective_id="O", objective_label="O", is_orphan=False,
+                               shadow_savings=_json.dumps({"command_trim": 400})))
+    rep = management_report(s, k=5)
+    sh = rep["compression"]["shadow"]
+    assert sh["command_trim"]["tokens"] == 2000 and sh["command_trim"]["usd"] >= 0
+    s.close()

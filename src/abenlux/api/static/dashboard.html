@@ -314,7 +314,14 @@ function reuseYieldView(ry){
 }
 
 async function loadManagement(){
-  const rep = await api("/api/report");
+  let rep;
+  try { rep = await api("/api/report"); }
+  catch(e){
+    // a shared multi-org collector refuses the merged 'default' tenant with a 409. show why instead of
+    // a blank tab.
+    $("#mgmtKpis").innerHTML = `<div class="muted">${e.message||"could not load the report"}. Register a tenant for your org and view that tenant.</div>`;
+    return;
+  }
   const band = rep.recoverable_resent_history_usd;
   const ry = rep.reuse_yield || {};
   $("#driftBanner").innerHTML = driftBanner(rep.trend);
@@ -362,9 +369,13 @@ async function loadDeveloper(){
     const action = c ? '<span class="save">intro made - reach out</span>'
       : (m.you_requested ? '<span class="muted">requested · waiting on them</span>'
         : `<button class="consent" onclick="consent(${m.id})">Request intro</button>`);
+    // on a reuse match the peer already cracked it: show the content-free capsule so the developer can
+    // pick the right model first, before any intro.
+    const cap = m.capsule;
+    const capsule = cap ? `<div class="muted" style="margin-top:5px">cracked with <b>${cap.model}</b> via ${cap.tool} · ${cap.work_type} · ${cap.cost_band}</div>` : "";
     return `<div class="feed-item"><div class="kind collab">${m.mode.replace("_"," ")}</div>
       <div>${who} ${verb} <b>${m.topic}</b> <span class="muted">· similarity ${m.similarity}</span></div>
-      <div>${action}</div></div>`;
+      ${capsule}<div>${action}</div></div>`;
   }).join("");
 }
 

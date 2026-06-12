@@ -3,6 +3,41 @@
 All notable changes to this project are documented here. This project adheres to semantic
 versioning.
 
+## [0.5.0] - 2026-06
+
+The forward proxy. One capture path that works no matter how a tool signs in, a company subscription or
+a personal API key, and the only path that can compress a subscription tool's request on the wire. The
+tool routes through the agent as an ordinary HTTPS proxy, the agent terminates TLS for the model API
+hosts with a small local certificate it owns, redacts and compresses on the device, and forwards to the
+real provider with the tool's own credential untouched. Everything else, the browser and every other
+app, is tunnelled straight through unread, and the proxy is scoped to just the tool launched with
+abenlux run. Because the saving now happens on the wire for any sign-in, a separate tool-output
+compressor like RTK is no longer required for compression to work.
+
+### Added
+- Forward TLS-terminating proxy (capture/forward_proxy.py). A LocalCA mints a short-lived leaf
+  certificate per model API host on demand, so the agent presents a trusted certificate, reads the
+  request on the device, runs the same compress_request and the same gateway._capture pipeline the
+  base-url gateway uses, and forwards to the real provider. It terminates TLS only for the known model
+  hosts and tunnels every other host through unread.
+- abenlux ca / run / proxy commands. ca prints the local certificate to trust once, run launches a tool
+  routed through the proxy with the proxy and trusted certificate scoped to that one process tree, and
+  proxy runs the forward proxy on its own for IT to push to every machine.
+- x-aben-* attribution headers (actor, tool, branch, repo, ticket) are read in the forward proxy for
+  attribution, then stripped before forwarding so they never reach the provider.
+- Both-path proof (examples/proxy-suite-e2e). Drives six developers and tools across all three providers
+  down both capture paths in one run, the base-url gateway and the forward proxy, each call with a real
+  API key in its native header. 17 of 17 checks pass and a detailed REPORT.md is written, covering
+  traffic isolation, capture, compression and savings, collaboration and reuse, value, renewal, and
+  privacy. The isolation check proves a non-model site is tunnelled untouched while a model host is
+  intercepted.
+- Single-provider forward-proxy E2E against the real Anthropic (examples/proxy-e2e).
+
+### Changed
+- README and ARCHITECTURE lead with the forward proxy. The README hero states the any-sign-in promise,
+  a new what-sets-it-apart row covers it, and the ARCHITECTURE data-flow diagram shows the forward proxy
+  as a first-class capture path beside the base-url gateway and OTLP telemetry.
+
 ## [0.4.0] - 2026-06
 
 The edge compression layer. A pluggable set of token savers that run on the outbound request at the

@@ -18,9 +18,12 @@ flowchart TB
     TOOL["AI coding tool — Claude Code · Codex · Gemini CLI · aider · opencode · Cline · …"]
     TOOL -->|"Tier 2 — base_url proxy"| PROXY["gateway._proxy<br/>stream-through + tee<br/>BackgroundTask, off the hot path"]
     TOOL -.->|"Tier 1 — OTLP telemetry"| OTEL["otel_ingest<br/>gen_ai.* and claude_code.api_request"]
+    TOOL -->|"forward HTTPS proxy — subscription OR key"| FWD["forward_proxy<br/>terminates TLS for model hosts only<br/>compress on the wire, tunnel the rest"]
     PROXY -->|"forward unchanged"| UP["upstream model API<br/>Anthropic · OpenAI · Azure · Gemini"]
+    FWD -->|"forward unchanged"| UP
     PROXY --> EVT["CanonicalEvent"]
     OTEL --> EVT
+    FWD --> EVT
 
     EVT --> PIPE
     subgraph PIPE["pipeline.process — runs entirely on the device"]
@@ -54,7 +57,7 @@ flowchart TB
 
   classDef edge fill:#0d1b2a,stroke:#1b9aaa,color:#e0fbfc;
   classDef host fill:#1a1423,stroke:#a06cd5,color:#f3e8ff;
-  class TOOL,PROXY,OTEL,EVT,P1,P2,P3,P4,P5,P6,P7,FEED,SINK,UP edge;
+  class TOOL,PROXY,OTEL,FWD,EVT,P1,P2,P3,P4,P5,P6,P7,FEED,SINK,UP edge;
   class STORE,CENTRAL,ANALYTICS,MATCH,API,TIER3 host;
 ```
 
@@ -127,7 +130,12 @@ hosts and tunnels every other host straight through unread, and the launcher `ab
 the proxy and the trusted certificate for just that one process, so the browser and everything else are
 never touched. Because the request is rewritten on the wire here, compression works for a subscription
 tool and a key tool alike, which is why a separate tool-output compressor at the agent's hook layer is
-no longer required. The forward proxy is exercised against the real provider in `examples/proxy-e2e`.
+no longer required. The forward proxy is exercised against the real provider in `examples/proxy-e2e`,
+and `examples/proxy-suite-e2e` drives **both** capture paths side by side in one run, the base-url
+gateway and the forward proxy, six developers and tools across all three providers with real keys,
+asserting **17 checks** including the traffic-isolation proof (a non-model host validates against the
+system trust store so it was tunnelled untouched, and a model host fails it so it was intercepted) and
+writing a detailed `REPORT.md`.
 
 ## The collector is the authoritative trust boundary
 

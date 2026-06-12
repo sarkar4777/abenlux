@@ -23,8 +23,12 @@ Codex, Gemini CLI, Cursor, Copilot, aider, Cline, Continue, opencode, Crush, Dro
 normalizes it to one schema, **attributes spend to a business objective by a join (not a guess)**,
 classifies **what the spend is for** (new feature vs bug fix vs refactor), prices it in dollars, runs
 **objective budgets with forecast and drift alerts**, and **learns your team's intent vocabulary** so
-classification gets smarter and nearly free. Every prompt is redacted on the developer's own machine,
-and management only ever sees privacy-preserving aggregates.
+classification gets smarter and nearly free.
+
+However a tool signs in, with a **company subscription** or a **personal API key**, Abenlux captures it,
+and a single **forward proxy** can even compress a subscription tool's calls right on the wire. Every
+prompt is redacted on the developer's own machine, and management only ever sees privacy-preserving
+aggregates.
 
 > **What no other tool does:** objective-tied budget guardrails that warn the **developer** privately
 > while management sees only k-anonymized aggregates, with **purpose traceability** (net-new vs
@@ -104,6 +108,7 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 | 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
 | ♻️ **Cache-aware savings** | Separates fresh input from cache reads/writes per call, reports a **prompt-cache hit ratio**, and flags resent context that *isn't* being cached — the one token-saving lever with **zero loss of detail**, because the exact same context is sent, just billed as a cache hit. |
 | 🗜 **Compression layer** | A pluggable set of token savers that run on the **outbound request at the gateway**, so **every tool gets it** (IDE or CLI, any provider) with no setup. Safe lossless strategies run automatically (the **Prefix-Break Localizer** moves an injected date/id out of the cache-stable prefix so prompt caching hits); content-rewriting ones (RTK-style command-output trimming, DocLang/OTSL tables, Headroom-style JSON minify, Bifrost-style tool-def dedupe) are **one flag** (`ABEN_COMPRESS`). An **exact-match cache** serves a byte-identical repeat for free. A failing strategy is skipped, so it **never breaks a call**, and the realized savings show up beside spend. |
+| 🔌 **One proxy for any sign-in** | A forward HTTPS proxy that captures **and compresses** every tool the same way, whether it signs in with a **company subscription or an API key**. It is the only path that can shrink a *subscription* tool's request on the wire. It terminates TLS for the model API hosts only and tunnels everything else (your browser included) through untouched, scoped to just the tool you launch with `abenlux run`. Both paths are proven at once, the base-url gateway and the forward proxy, with real keys, 17 of 17, in [examples/proxy-suite-e2e](examples/proxy-suite-e2e/). |
 | 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**, traced to the ticket. Long, code-heavy, multi-part prompts are reduced to their **salient intent** first, so a pasted stack trace doesn't get mislabelled a "fix". 98.6% accuracy on a 69-prompt corpus, 100% on the net-new/maintenance split. |
 | 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
 | 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
@@ -367,6 +372,16 @@ passed straight through and never read. And it scopes to the one tool you launch
 nothing else on the machine is touched. Because the saving now happens right here on the wire for any
 sign-in, **a separate tool-output compressor like RTK is no longer required** for compression to work,
 though abenlux still credits and can wire RTK at the tool layer if you prefer it.
+
+> **Proven, both paths at once, with real keys.** [`examples/proxy-suite-e2e`](examples/proxy-suite-e2e/)
+> drives six developers and tools across all three providers down **both** capture paths in one run, the
+> original base-url gateway and this forward proxy, each call with a real API key in its native header
+> (Anthropic `x-api-key`, OpenAI bearer, Gemini `x-goog-api-key`), and the bearer doubles as the
+> subscription proof. **17 of 17 checks pass**, and it writes a detailed `REPORT.md` covering traffic
+> isolation, capture, compression and savings, collaboration and reuse, value, renewal, and privacy. The
+> isolation check is the headline. A non-model site routed through the proxy still validates against the
+> system trust store with its own real certificate, so it was tunnelled untouched, while a model host
+> fails the system store because the proxy presents its own local leaf, so it was intercepted.
 
 > **Verified end-to-end with the real tools, not mocks of them.** Capture and per-call cost were
 > checked by driving the genuine **Claude Code** (Tier-1 OTel, real session telemetry incl. cache

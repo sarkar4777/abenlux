@@ -415,6 +415,56 @@ with and credit** the open tools that pioneered them:
 
 ---
 
+## What this release adds (in plain words)
+
+Eight new things, grouped by what they are for. Spend less. Get smarter about whether the spend was
+worth it. Help people help each other. Reach more tools. Reproduce all of it with real models from
+[examples/features-e2e](examples/features-e2e/).
+
+### Spend less
+
+- **Cache breakpoints.** A model can read the unchanging top of your prompt from its own memory instead
+  of being charged for it again. We mark where that steady part ends so the provider keeps it. It
+  changes nothing the model reads, so it is safe and on by default.
+- **Tool result trim.** In an agent session the biggest part of every request is the output of the
+  tools the agent ran, and the same output is sent again every turn. We fold the noise out of it. The
+  instructions and the answer are never touched.
+- **Shadow measure.** A few savers are off by default because they change your prompt text. We run them
+  quietly in the background without touching your call and show what turning each one on would have
+  saved. A manager turns one on with proof, not a guess.
+
+### Know if the spend was worth it
+
+- **Spend to value.** Spend tells you what the AI cost. It does not tell you if the work shipped. A
+  small content free feed from git or your build system tells us whether a change merged, whether it was
+  reverted, and how many lines it touched. We join that to spend and show the return, like dollars per
+  merged change. Nothing here is a guess and nothing here is your code.
+- **Orphan recovery.** Orphan spend is AI money that did not tie to any goal, and it is the headline
+  waste number. We group the untracked work that is about the same thing, and when enough people share a
+  group we propose a name for it. A manager accepts once and that work tracks itself from then on, so
+  tomorrow's waste pool is smaller.
+
+### Help people help each other
+
+- **Solution capsules.** When you start on something the team already cracked, you now see a small
+  content free card right away. It says which model and tool cracked it and a rough cost band, so you
+  pick the right model first. It holds no code and no prompt.
+- **Ask without waiting.** You can send the person who solved your problem one question right away,
+  before any introduction, and they answer when they are around. Neither side sees who the other is
+  until you both agree. Every message is cleaned of secrets before it is stored.
+
+### Reach more tools
+
+- **A tool for your coding agent.** Run `abenlux mcp` and the agent can ask, in the middle of a task,
+  am I over budget, has anyone solved this, what is this branch for, and what would this call cost. It
+  only ever returns your own data and adds no new permission.
+- **Compare across companies, safely.** Every company wants to know how its AI efficiency stacks up
+  against its peers, but none will hand over raw numbers. So each company blurs its own numbers on its
+  own machine and sends only the blurred version. The exchange waits until enough companies have joined,
+  then tells each one only its rank in the group, never another company's number.
+
+---
+
 ## Capture is tiered by how each tool actually makes its call
 
 `abenlux tiers` prints the live matrix. We never present metadata-only data as full-content data.

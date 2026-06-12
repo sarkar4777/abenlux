@@ -240,6 +240,46 @@ These are abenlux's own bounded implementations that interoperate with and credi
 pioneered each lever (RTK, DocLang/Docling, Headroom, Bifrost Code Mode); RTK in particular runs *below*
 abenlux at the agent tool-hook layer, so the two stack and `agent install` wires RTK's hook when present.
 
+Two newer savers live in the same registry. `cache_breakpoints` marks the end of the stable system
+prompt so Anthropic keeps it in its own cache and reads it back cheaply on later turns, and it skips a
+prompt too small to cache. It adds no words the model reads, so it is safe and on by default.
+`tool_result_trim` folds the noise out of the tool output that an agent resends every turn. The gateway
+also runs the off by default savers quietly in the background without changing the call and writes what
+each one would have saved into a content free field, so the report can show what enabling one would save
+with evidence. None of this slows the developer's call.
+
+## What this release adds
+
+A set of new modules sit beside the existing core, each one small and read mostly, and each one keeps
+the same rules. Nothing raw leaves the edge, management never sees one individual, and a developer's
+call is never put at risk.
+
+- **The value side of the ledger** lives in `analytics/outcomes.py`. A content free feed from git or CI
+  posts plain facts about each change to `POST /v1/outcomes`, like did it merge and was it reverted and
+  how many lines it touched, keyed by the ticket and resolved to its objective. `analytics/reports.py`
+  joins that to spend behind the same k anonymity wall as the dollar total, so the report shows the
+  return on spend, like dollars per merged change.
+- **Orphan recovery** lives in `analytics/recovery.py`. It groups the unattributed records that carry a
+  topic vector and, where a group is shared by at least k developers, proposes a name and the repo it
+  came from at `GET /api/orphans`. A manager accepts one and that work tracks itself after that.
+- **Solution capsules** live in `developer/capsules.py`. When a clean call cracks a piece of work the
+  collector writes a content free card for the solver and the topic, and `/api/me` joins it onto a reuse
+  match so the next developer sees which model and tool cracked it without any introduction.
+- **The async help relay** lives in `developer/relay.py`. A developer can send a matched peer one
+  redacted question right away at `POST /api/collab/{id}/ask`, the peer reads and answers from
+  `GET /api/threads` and `POST /api/thread/{id}/reply`, and neither side sees who the other is until they
+  both consent. Every message is redacted before it is stored.
+- **The negotiation pack** lives in `analytics/negotiation.py` behind `GET /api/negotiation`. It turns
+  the spend totals into the blended rate the org pays across every tool, how concentrated the spend is,
+  and what a committed use discount would save.
+- **The MCP server** lives in `mcp_server.py` behind `abenlux mcp`. It exposes the read views as tools a
+  coding agent can call in flow, each one resolving the caller's own token and returning only the
+  caller's own data.
+- **The cross-org exchange** lives in `analytics/exchange.py`. Each org blurs its own ratios on its own
+  machine and posts only the blurred shares to `POST /v1/exchange/submit`. `GET /api/exchange` waits
+  until enough orgs have joined and returns the caller's org only its rank in the group, never another
+  org's number.
+
 ## The background agent
 
 `abenlux agent install` runs the capture agent in the background, started at user login, in the

@@ -387,9 +387,38 @@ class CompressionResult:
     per_strategy: dict = field(default_factory=dict)   # strategy name -> input tokens it removed
 
 
+def _tool_result_text(body: dict, provider: str) -> int:
+    # tool output is billed input too, so tool_result_trim's saving is only visible if we count it. it
+    # does not live in the plain text slots, so walk for it the same way the trim strategy does.
+    total = 0
+    if provider == "google":
+        for content in body.get("contents", []) if isinstance(body.get("contents"), list) else []:
+            for part in content.get("parts", []) if isinstance(content.get("parts"), list) else []:
+                resp = (part.get("functionResponse") or {}).get("response") if isinstance(part, dict) else None
+                if isinstance(resp, dict):
+                    total += sum(estimate_tokens(v) for v in resp.values() if isinstance(v, str))
+        return total
+    for msg in body.get("messages", []) if isinstance(body.get("messages"), list) else []:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+            total += estimate_tokens(msg["content"])
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    inner = block.get("content")
+                    if isinstance(inner, str):
+                        total += estimate_tokens(inner)
+                    elif isinstance(inner, list):
+                        total += sum(estimate_tokens(s.get("text", "")) for s in inner if isinstance(s, dict))
+    return total
+
+
 def _body_tokens(body: dict, provider: str) -> int:
     import json as _json
     total = sum(estimate_tokens(c[k]) for c, k in _slots(body, provider, {"system", "user", "assistant"}))
+    total += _tool_result_text(body, provider)
     # tool/function definitions are billed input too, so slim_tools' saving is only visible if we count
     # them. serialize each definition and estimate - cheap and provider-agnostic.
     for key in ("tools", "functions"):

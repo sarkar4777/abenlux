@@ -168,6 +168,7 @@ def test_tool_result_trim_folds_noisy_tool_output():
     trimmed = out.body["messages"][0]["content"][0]["content"]
     assert "\x1b[" not in trimmed and "... x60" in trimmed    # color gone, repeats folded
     assert out.body["messages"][0]["content"][1]["text"] == "what failed?"   # the question is untouched
+    assert out.saved_tokens > 0                               # the saving on tool output is now counted
 
 
 def test_per_strategy_attribution_sums_to_total():

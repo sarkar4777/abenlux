@@ -393,3 +393,17 @@ def test_value_only_counts_objectives_the_tenant_spent_on(tmp_path):
     assert (repB["value"] or {}).get("merged", 0) == 0       # acme-us did not, so it never leaks in
     oc.close()
     s.close()
+
+
+def test_compression_block_is_suppressed_below_k(tmp_path):
+    from abenlux.analytics.reports import management_report
+    from abenlux.schema import DerivedRecord
+    from abenlux.store import DerivedStore
+    s = DerivedStore(tmp_path / "k.db")
+    for i in range(2):                       # only 2 developers, below k=5
+        s.insert(DerivedRecord(event_id=f"e{i}", ts=1.0, tier="t", provider="anthropic", actor_pseudonym=f"a{i}",
+                               request_model="m", input_tokens=1000, output_tokens=10, duplicate_history_tokens=0,
+                               cost_usd=1.0, saved_input_tokens=500))
+    cz = management_report(s, k=5)["compression"]
+    assert cz == {"suppressed": True}        # savings are an org figure, hidden below the k threshold
+    s.close()

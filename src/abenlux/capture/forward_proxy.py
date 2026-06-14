@@ -92,6 +92,10 @@ class LocalCA:
                                                      content_commitment=False, data_encipherment=False,
                                                      key_agreement=False, encipher_only=False,
                                                      decipher_only=False), critical=True)
+                        # a Subject Key Identifier on the CA is what a leaf's Authority Key Identifier
+                        # points back to; modern OpenSSL (Python 3.13) rejects the chain without it.
+                        .add_extension(x509.SubjectKeyIdentifier.from_public_key(self.ca_key.public_key()),
+                                       critical=False)
                         .sign(self.ca_key, hashes.SHA256()))
         self.key_path.write_bytes(self.ca_key.private_bytes(
             ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))
@@ -106,7 +110,9 @@ class LocalCA:
             ctx = self._leaf_ctx.get(hostname)
             if ctx is not None:
                 return ctx
-            leaf = self.dir / f"leaf-{hostname}.pem"
+            # v2 leaf files carry the key identifiers / EKU that strict verifiers require; the suffix
+            # bump makes an upgraded install re-mint rather than reuse a stale pre-v2 leaf.
+            leaf = self.dir / f"leaf-{hostname}-v2.pem"
             if not leaf.exists():
                 self._mint_leaf(hostname, leaf)
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -116,6 +122,7 @@ class LocalCA:
 
     def _mint_leaf(self, hostname: str, out: Path) -> None:
         x509, hashes, ser, rsa, oid = self._x509, self._hashes, self._ser, self._rsa, self._oid
+        from cryptography.x509.oid import ExtendedKeyUsageOID
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         now = datetime.datetime.now(datetime.timezone.utc)
         cert = (x509.CertificateBuilder()
@@ -125,6 +132,14 @@ class LocalCA:
                 .not_valid_before(now - datetime.timedelta(days=1))
                 .not_valid_after(now + datetime.timedelta(days=825))
                 .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+                .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+                # the key identifiers are mandatory for a strict (Python 3.13 / OpenSSL 3) verifier: the
+                # leaf's Authority Key Identifier must point back to the CA, and serverAuth EKU is what
+                # macOS in particular insists on for a TLS server certificate.
+                .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+                .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(self.ca_key.public_key()),
+                               critical=False)
+                .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
                 .sign(self.ca_key, hashes.SHA256()))
         out.write_bytes(cert.public_bytes(ser.Encoding.PEM) + key.private_bytes(
             ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))

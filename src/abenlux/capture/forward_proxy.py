@@ -209,17 +209,56 @@ def _read_http_request(sock) -> tuple[str, str, dict, bytes] | None:
             headers[k.decode("latin1").strip().lower()] = v.decode("latin1").strip()
     body = rest
     n = int(headers.get("content-length", "0") or "0")
-    while len(body) < n:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        body += chunk
+    if n:
+        while len(body) < n:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            body += chunk
+    elif "chunked" in headers.get("transfer-encoding", "").lower():
+        # node and claude code send the body chunked with no content-length. read to the final zero
+        # length chunk then de-chunk, so we can parse it and forward it with a real length.
+        while b"0\r\n\r\n" not in body:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            body += chunk
+            if len(body) > 16 * 1024 * 1024:
+                break
+        body = _dechunk(body)
     return method, path, headers, body
+
+
+def _dechunk(data: bytes) -> bytes:
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        j = data.find(b"\r\n", i)
+        if j == -1:
+            break
+        try:
+            size = int(data[i:j].split(b";", 1)[0], 16)
+        except ValueError:
+            break
+        if size == 0:
+            break
+        start = j + 2
+        out += data[start:start + size]
+        i = start + size + 2          # skip the chunk data and its trailing CRLF
+    return bytes(out)
 
 
 def _provider_path_kind(provider: Provider, path: str) -> bool:
     # the OpenAI Responses API (what Codex speaks) needs a different adapter
     return provider == Provider.OPENAI and path.startswith("/v1/responses")
+
+
+def _is_model_path(path: str) -> bool:
+    # the real model endpoints, not the telemetry, mcp registry and oauth calls a tool also makes
+    p = path.split("?", 1)[0].lower()
+    return (p == "/v1/messages" or p == "/v1/chat/completions" or p == "/v1/responses"
+            or (p.startswith("/v1beta/models/") and "generatecontent" in p)
+            or (p.startswith("/openai/deployments/") and p.endswith("/chat/completions")))
 
 
 class _Forwarder:
@@ -242,6 +281,10 @@ class _Forwarder:
         method, path, headers, body = req
         provider = _provider_for(host)
         response_api = _provider_path_kind(provider, path)
+        # a tool hits many non-model endpoints on the same host (telemetry, mcp registry, oauth). only the
+        # model endpoints are compressed, routed, cached and captured, the rest are forwarded untouched.
+        is_model = _is_model_path(path)
+        do_capture = self.capture and is_model
         streamed = b'"stream":true' in body.replace(b" ", b"") or "streamgeneratecontent" in path.lower() \
             or "alt=sse" in path.lower()
         try:
@@ -256,7 +299,7 @@ class _Forwarder:
         try:
             from abenlux.compress import compress_request, enabled_strategies
             strats = enabled_strategies(getattr(SETTINGS, "compress", None))
-            if strats and isinstance(req_json, dict):
+            if strats and isinstance(req_json, dict) and is_model:
                 cres = compress_request(req_json, provider.value, strats)
                 if cres.applied:
                     req_json = cres.body
@@ -270,7 +313,7 @@ class _Forwarder:
         route_info = None
         try:
             _mode = getattr(SETTINGS, "route", None)
-            if _mode in ("on", "shadow") and isinstance(req_json, dict):
+            if _mode in ("on", "shadow") and isinstance(req_json, dict) and is_model:
                 from abenlux.route import decide
                 _d = decide(req_json, provider.value)
                 if _d.target:
@@ -293,7 +336,7 @@ class _Forwarder:
         # exact-match cache. a byte-identical non-streamed repeat is served locally, upstream call avoided
         _actor = ov.get("actor") or "local"
         cache_key = (_fp_key(host, path, out_body, _actor)
-                     if getattr(SETTINGS, "exact_cache", False) and not streamed else None)
+                     if getattr(SETTINGS, "exact_cache", False) and not streamed and is_model else None)
         if cache_key is not None:
             hit = _fp_get(cache_key)
             if hit is not None:
@@ -305,7 +348,7 @@ class _Forwarder:
                     tls.sendall(cbody)
                 except OSError:
                     return
-                if self.capture:
+                if do_capture:
                     info = dict(compress_info, cached=True)
                     self._cap_async(provider, req_json, cbody, False, 0.0, ov, response_api, info, route_info)
                 return
@@ -337,7 +380,7 @@ class _Forwarder:
 
         # capture in the background, reusing the gateway pipeline so spend, attribution, savings, and
         # collaboration all work the same as the base-url path.
-        if not self.capture:
+        if not do_capture:
             return
         latency = (time.perf_counter() - started) * 1000
         self._cap_async(provider, req_json, bytes(captured), streamed, latency, ov, response_api,

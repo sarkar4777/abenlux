@@ -139,3 +139,43 @@ def test_a_cache_hit_reaches_the_developer_feed(tmp_path, monkeypatch):
     assert "cache_hit" in [e["kind"] for e in entries]
     assert any(k == "cache_hit" for k, _ in toasts)
 
+
+def test_only_model_endpoints_are_captured():
+    from abenlux.capture.forward_proxy import _is_model_path
+    assert _is_model_path("/v1/messages?beta=true")
+    assert _is_model_path("/v1/chat/completions")
+    assert _is_model_path("/v1beta/models/gemini-2.5-flash:streamGenerateContent")
+    assert not _is_model_path("/api/event_logging/v2/batch")
+    assert not _is_model_path("/mcp-registry/v0/servers")
+    assert not _is_model_path("/v1/mcp_servers")
+    assert not _is_model_path("/api/oauth/account/settings")
+
+
+def test_dechunk_reassembles_a_split_body():
+    from abenlux.capture.forward_proxy import _dechunk
+    body = b'{"model":"claude-haiku-4-5","max_tokens":8}'
+    a, b = body[:10], body[10:]
+    raw = (f"{len(a):x}".encode() + b"\r\n" + a + b"\r\n"
+           + f"{len(b):x}".encode() + b"\r\n" + b + b"\r\n0\r\n\r\n")
+    assert _dechunk(raw) == body
+
+
+def test_a_chunked_request_body_is_read_and_forwarded_whole(tmp_path, monkeypatch):
+    # node and claude code send the body chunked with no content-length. the proxy must still parse it.
+    _settings(monkeypatch)
+    srv, up, state, port, ca = _proxy(tmp_path)
+
+    def gen():
+        yield b'{"model":"claude-haiku-4-5",'
+        yield b'"max_tokens":8,"messages":[{"role":"user","content":"hi"}]}'
+    try:
+        with httpx.Client(proxy=f"http://127.0.0.1:{port}", verify=ca, timeout=15) as c:
+            c.post("https://api.anthropic.com/v1/messages",
+                   headers={"x-api-key": "k", "anthropic-version": "2023-06-01",
+                            "content-type": "application/json"}, content=gen())
+        fwd = json.loads(state["body"])
+        assert fwd["model"] == "claude-haiku-4-5"
+    finally:
+        srv.shutdown()
+        up.shutdown()
+

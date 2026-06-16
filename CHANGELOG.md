@@ -3,6 +3,25 @@
 All notable changes to this project are documented here. This project adheres to semantic
 versioning.
 
+## [0.6.1] - 2026-06
+
+Hardening the forward proxy against how real tools behave, found by driving real subscription and key
+tools through it.
+
+### Fixed
+- The forward proxy now reads a chunked request body. Node and Claude Code send the body with
+  Transfer-Encoding chunked and no content-length, which the raw reader ignored, so the request parsed
+  empty (#61).
+- The forward proxy only captures the real model endpoints now. A tool hits its provider host on many
+  other paths, telemetry, mcp registry, oauth, and the proxy was capturing all of them as empty or
+  garbage records. Compression, routing, the cache and capture are gated on a model path check, the rest
+  is forwarded untouched (#62).
+
+### Validated against real providers
+- A real Claude Code subscription session through the forward proxy, captured with real tokens, real cost
+  and compression, with no API key, the subscription login used as is.
+- A real Gemini CLI session with an api key through the forward proxy, captured the same way.
+
 ## [0.6.0] - 2026-06
 
 Two more ways to spend fewer tokens, built on the edge gateway and the collector, proven across a team

@@ -12,7 +12,7 @@ and cheaper over time.**
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-352%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-350%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
@@ -128,7 +128,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 352 tests
+make test             # 350 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -619,7 +619,7 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-352 unit and integration tests. They include an exhaustive multi user org simulation, the real
+350 unit and integration tests. They include an exhaustive multi user org simulation, the real
 Anthropic, OpenAI and Azure OpenAI SDKs driven through a live gateway, wire format tests pinned from
 genuine Claude Code, Gemini CLI and Codex traffic, a self learning loop test, a multi tenant suite
 covering the reuse yield ledger and the benchmark exchange with tenant scoping, k anon savings, DP
@@ -637,7 +637,7 @@ Two labelled accuracy corpora keep the parts management and developers rely on h
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 352 tests
+make test       # 350 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

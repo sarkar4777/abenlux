@@ -100,6 +100,12 @@ class LocalSignalFeed:
         self.append(FeedEntry(ts=time.time(), kind="budget_guardrail", severity="warn",
                               line=line, tool=tool))
 
+    def append_savings(self, line: str, *, kind: str = "savings", tool: str | None = None,
+                       recoverable_usd: float = 0.0) -> None:
+        # a win the developer should just see, routing or a cache hit, no action needed
+        self.append(FeedEntry(ts=time.time(), kind=kind, severity="info", line=line, tool=tool,
+                              recoverable_usd=round(recoverable_usd, 4)))
+
     def recent(self, n: int = 20) -> list[dict]:
         if not self.path.exists():
             return []

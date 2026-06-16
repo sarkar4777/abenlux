@@ -242,6 +242,18 @@ def _surface_to_developer(result, event) -> None:
     """push waste nudges + collaboration matches to the developer's OWN local feed. tool-agnostic:
     runs identically for gateway (Tier-2) and OTLP (Tier-1) captures."""
     tool = event.work.tool
+    # savings the developer should just see in their own notifications, no dashboard or terminal to open.
+    # works the same whether the call came through the gateway or the forward proxy.
+    rec0 = result.record
+    if getattr(rec0, "served_from_cache", False):
+        line = "Served an identical repeat from the local cache. No tokens spent."
+        _feed.append_savings(line, kind="cache_hit", tool=tool,
+                             recoverable_usd=getattr(rec0, "saved_input_tokens", 0) and 0.0)
+        _toast("cache_hit", line)
+    if getattr(rec0, "route_saved_usd", 0) and rec0.route_saved_usd >= 0.0001:
+        line = f"Sent an easy call to {rec0.route_target} instead. Saved about ${rec0.route_saved_usd:.4f}."
+        _feed.append_savings(line, kind="routing", tool=tool, recoverable_usd=rec0.route_saved_usd)
+        _toast("routing", line)
     for s in result.waste_signals:
         tokens = getattr(s, "recoverable_tokens", 0)
         # resent-history signals save the input-vs-cache delta (lossless), avoidable calls save full cost

@@ -19,18 +19,53 @@ a key tool alike, so a separate tool-output compressor is no longer required for
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import socket
 import socketserver
 import ssl
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 import httpx
 
 from abenlux.schema import Provider
 from abenlux.settings import SETTINGS
+
+# exact-match cache for the forward proxy, mirroring the gateway. a byte-identical non-streamed repeat is
+# served from here so the upstream call is avoided. the cached response stays on the device, never leaves.
+_FP_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_FP_CACHE_MAX = 256
+_FP_LOCK = threading.Lock()
+
+
+def _fp_key(host: str, path: str, body: bytes, actor: str) -> str:
+    h = hashlib.blake2b(body, digest_size=16)
+    h.update(f"\x00{host}\x00{path}\x00{actor}".encode())
+    return h.hexdigest()
+
+
+def _fp_get(key: str):
+    with _FP_LOCK:
+        ent = _FP_CACHE.get(key)
+        if ent is None:
+            return None
+        if time.time() > ent[0]:
+            _FP_CACHE.pop(key, None)
+            return None
+        _FP_CACHE.move_to_end(key)
+        return ent[1]
+
+
+def _fp_put(key: str, value: tuple) -> None:
+    ttl = getattr(SETTINGS, "exact_cache_ttl_s", 300.0)
+    with _FP_LOCK:
+        _FP_CACHE[key] = (time.time() + ttl, value)
+        _FP_CACHE.move_to_end(key)
+        while len(_FP_CACHE) > _FP_CACHE_MAX:
+            _FP_CACHE.popitem(last=False)
 
 # the model API hosts we terminate TLS for. everything else is tunnelled straight through, unread.
 AI_HOSTS: dict[str, Provider] = {
@@ -231,6 +266,21 @@ class _Forwarder:
         except Exception:
             pass
 
+        # model routing at the interception point, so a subscription tool gets it too
+        route_info = None
+        try:
+            _mode = getattr(SETTINGS, "route", None)
+            if _mode in ("on", "shadow") and isinstance(req_json, dict):
+                from abenlux.route import decide
+                _d = decide(req_json, provider.value)
+                if _d.target:
+                    route_info = {"original": _d.original, "target": _d.target, "mode": _mode}
+                    if _mode == "on":
+                        req_json["model"] = _d.target
+                        out_body = _json.dumps(req_json).encode()
+        except Exception:
+            pass
+
         # abenlux-internal headers (a wrapper may stamp the developer, tool, and branch) are read for
         # attribution and then DROPPED, so they never reach the provider.
         ov = {"tool": headers.get("x-aben-tool") or "proxy", "actor": headers.get("x-aben-actor"),
@@ -239,13 +289,34 @@ class _Forwarder:
         fwd = {k: v for k, v in headers.items() if k not in _HOP and not k.startswith("x-aben-")}
         fwd["accept-encoding"] = "identity"        # we tee the body, so ask the provider not to compress
         url = self._base(host) + path
+
+        # exact-match cache. a byte-identical non-streamed repeat is served locally, upstream call avoided
+        _actor = ov.get("actor") or "local"
+        cache_key = (_fp_key(host, path, out_body, _actor)
+                     if getattr(SETTINGS, "exact_cache", False) and not streamed else None)
+        if cache_key is not None:
+            hit = _fp_get(cache_key)
+            if hit is not None:
+                status, reason, rhdr, cbody = hit
+                try:
+                    blob = (f"HTTP/1.1 {status} {reason}\r\n"
+                            + "".join(f"{k}: {v}\r\n" for k, v in rhdr.items()) + "\r\n")
+                    tls.sendall(blob.encode("latin1"))
+                    tls.sendall(cbody)
+                except OSError:
+                    return
+                if self.capture:
+                    info = dict(compress_info, cached=True)
+                    self._cap_async(provider, req_json, cbody, False, 0.0, ov, response_api, info, route_info)
+                return
+
         captured = bytearray()
         started = time.perf_counter()
         try:
             with self._client.stream(method, url, content=out_body, headers=fwd) as up:
-                status = up.status_code
+                status, reason = up.status_code, up.reason_phrase
                 rhdr = {k: v for k, v in up.headers.items() if k.lower() not in _HOP}
-                line = f"HTTP/1.1 {status} {up.reason_phrase}\r\n"
+                line = f"HTTP/1.1 {status} {reason}\r\n"
                 rhdr["Connection"] = "close"        # read-until-close keeps streaming simple and robust
                 blob = line + "".join(f"{k}: {v}\r\n" for k, v in rhdr.items()) + "\r\n"
                 tls.sendall(blob.encode("latin1"))
@@ -260,17 +331,23 @@ class _Forwarder:
                 pass
             return
 
+        # remember a clean non-streamed response so an identical repeat is served for free next time
+        if cache_key is not None and status < 300:
+            _fp_put(cache_key, (status, reason, rhdr, bytes(captured)))
+
         # capture in the background, reusing the gateway pipeline so spend, attribution, savings, and
         # collaboration all work the same as the base-url path.
         if not self.capture:
             return
-
         latency = (time.perf_counter() - started) * 1000
+        self._cap_async(provider, req_json, bytes(captured), streamed, latency, ov, response_api,
+                        compress_info, route_info)
 
+    def _cap_async(self, provider, req_json, raw, streamed, latency, ov, response_api, info, route_info):
         def _cap():
             try:
                 from abenlux.capture import gateway as gw
-                gw._capture(provider, req_json, bytes(captured), streamed, latency, ov, response_api, compress_info)
+                gw._capture(provider, req_json, raw, streamed, latency, ov, response_api, info, route_info)
             except Exception:
                 pass
         threading.Thread(target=_cap, daemon=True).start()

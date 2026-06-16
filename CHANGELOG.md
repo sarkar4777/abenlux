@@ -27,6 +27,11 @@ of more than twenty five developers signing in both ways.
   and reuse-yield, k-anonymity gated.
 - A new end-to-end example (examples/routing-teammemory-e2e) that drives 34 developers across 5 tenants
   and 13 IDE and CLI tools, both sign-ins, and renders the developer CLI screenshots.
+- Routing and the exact-match cache now run in the forward proxy too, so a subscription tool in an IDE
+  gets both, not just a base-url key tool. Same on Windows, macOS and Linux.
+- The wins reach the developer where they already are. A routed call and a cache hit are written to the
+  private on-device feed and raised as a native desktop toast through the background agent, so a developer
+  in their IDE or terminal never has to open a dashboard to see the saving.
 
 ## [0.5.0] - 2026-06
 

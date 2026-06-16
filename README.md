@@ -2,43 +2,44 @@
 
 # ✦ Abenlux
 
-### The AI spend → value attribution plane
+### The AI spend to value attribution plane
 
-**See where every AI token goes, know *what it was for*, tie it to a business objective, catch budget
-overruns before they happen, and keep developers private from management — across every IDE and CLI
-coding tool. It even learns your team's intent vocabulary so it gets smarter and cheaper over time.**
+**See where every AI token goes, know what it was for, tie it to a business objective, catch budget
+overruns before they happen, and keep developers private from management, across every IDE and CLI
+coding tool. It spends fewer tokens for you and learns your team's intent vocabulary so it gets smarter
+and cheaper over time.**
 
 [![CI](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml/badge.svg)](https://github.com/sarkar4777/abenlux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![tests](https://img.shields.io/badge/tests-324%20passing-brightgreen.svg)](tests/)
+[![tests](https://img.shields.io/badge/tests-352%20passing-brightgreen.svg)](tests/)
 [![privacy](https://img.shields.io/badge/privacy-edge--redacted%20%C2%B7%20k--anon%20%C2%B7%20RBAC-success.svg)](CRITIQUE.md)
 
 </div>
 
 ---
 
-`aben` + *lux* — it puts light on where AI tokens go. Abenlux captures token usage from Claude Code,
-Codex, Gemini CLI, Cursor, Copilot, aider, Cline, Continue, opencode, Crush, Droid and more,
-normalizes it to one schema, **attributes spend to a business objective by a join (not a guess)**,
-classifies **what the spend is for** (new feature vs bug fix vs refactor), prices it in dollars, runs
-**objective budgets with forecast and drift alerts**, and **learns your team's intent vocabulary** so
-classification gets smarter and nearly free.
+Abenlux captures token usage from Claude Code, Codex, Gemini CLI, Cursor, Copilot, aider, Cline,
+Continue, opencode, Crush, Droid and more. It normalizes everything to one schema, attributes spend to a
+business objective by a join rather than a guess, classifies what the spend is for (a new feature, a bug
+fix, a refactor), prices it in dollars, runs objective budgets with forecast and drift alerts, and learns
+your team's intent vocabulary so classification gets smarter and nearly free.
 
-However a tool signs in, with a **company subscription** or a **personal API key**, Abenlux captures it,
-and a single **forward proxy** can even compress a subscription tool's calls right on the wire. Every
-prompt is redacted on the developer's own machine, and management only ever sees privacy-preserving
-aggregates.
+It also spends fewer tokens for you. It compresses the request on the wire, sends an easy call to a
+cheaper model, serves an identical repeat from a local cache, and shows what reusing a teammate's solved
+work would save. However a tool signs in, with a company subscription or a personal API key, Abenlux
+captures it and saves on it. Every prompt is redacted on the developer's own machine, and management only
+ever sees privacy preserving aggregates.
 
-> **What no other tool does:** objective-tied budget guardrails that warn the **developer** privately
-> while management sees only k-anonymized aggregates, with **purpose traceability** (net-new vs
-> maintenance) and a **self-learning local knowledge graph** — across **every** coding tool. See
-> [CRITIQUE.md](CRITIQUE.md) for the honest competitive analysis and limits.
+> What no other tool does. Objective tied budget guardrails that warn the developer privately while
+> management sees only k anonymized aggregates, with purpose traceability (net new versus maintenance)
+> and a self learning local knowledge graph, across every coding tool. See [CRITIQUE.md](CRITIQUE.md) for
+> the honest competitive analysis and limits.
 
 <div align="center">
 <img src="docs/dashboard-management.png" alt="Abenlux management dashboard" width="900">
-<br><em>Real captured data: spend → value, budgets with forecast, what the AI spend is for
-(net-new build vs maintenance), new initiatives, orphan spend, drift — all k-anonymized.</em>
+<br><em>Real captured data. Spend to value, budgets with forecast, what the AI spend is for (net new
+build versus maintenance), new initiatives, orphan spend, drift, all k anonymized.</em>
 </div>
 
 ## What it does, at a glance
@@ -105,22 +106,18 @@ intro: the peer's chosen contact handles are revealed only once both sides opt i
 
 | | |
 |---|---|
-| 🎯 **Spend → value by join** | Branch/ticket → objective via your knowledge graph. No ML, fully auditable. Repo-join and a confidence-gated semantic fallback follow. Unmatched spend is **orphan spend**, the headline waste metric. |
-| ♻️ **Cache-aware savings** | Separates fresh input from cache reads/writes per call, reports a **prompt-cache hit ratio**, and flags resent context that *isn't* being cached — the one token-saving lever with **zero loss of detail**, because the exact same context is sent, just billed as a cache hit. |
-| 🗜 **Compression layer** | A pluggable set of token savers that run on the **outbound request at the gateway**, so **every tool gets it** (IDE or CLI, any provider) with no setup. Safe lossless strategies run automatically (the **Prefix-Break Localizer** moves an injected date/id out of the cache-stable prefix so prompt caching hits); content-rewriting ones (RTK-style command-output trimming, DocLang/OTSL tables, Headroom-style JSON minify, Bifrost-style tool-def dedupe) are **one flag** (`ABEN_COMPRESS`). An **exact-match cache** serves a byte-identical repeat for free. A failing strategy is skipped, so it **never breaks a call**, and the realized savings show up beside spend. |
-| 🔌 **One proxy for any sign-in** | A forward HTTPS proxy that captures **and compresses** every tool the same way, whether it signs in with a **company subscription or an API key**. It is the only path that can shrink a *subscription* tool's request on the wire. It terminates TLS for the model API hosts only and tunnels everything else (your browser included) through untouched, scoped to just the tool you launch with `abenlux run`. Both paths are proven at once, the base-url gateway and the forward proxy, with real keys, 17 of 17, in [examples/proxy-suite-e2e](examples/proxy-suite-e2e/). |
-| 🧭 **Purpose traceability** | Every dollar is labelled with *what it's for* — feature, fix, refactor, perf, exploration, chore, docs, test — and split into **net-new build vs maintenance**, traced to the ticket. Long, code-heavy, multi-part prompts are reduced to their **salient intent** first, so a pasted stack trace doesn't get mislabelled a "fix". 98.6% accuracy on a 69-prompt corpus, 100% on the net-new/maintenance split. |
-| 🆕 **New-initiative radar** | Detects new apps/features that started consuming AI spend this period, with the work type and trace. |
-| 🧠 **Self-learning** | Every confident label (branch ground-truth or the LLM) teaches a free keyword layer, so the system classifies more for free and the LLM fires less over time. No signal is wasted. |
-| 🕸 **Developer-local knowledge graph** | Each developer owns a private, on-device graph of their objectives, tickets, purpose mix, tools, and self-learned vocabulary. View it anytime with `abenlux graph`. |
-| 💸 **Budgets + forecast + guardrails** | Per-objective ceilings, run-rate projection, projected overrun, and a **private** nudge to the developer when their objective is over/at-risk. |
-| 📈 **Drift** | Window-over-window orphan-share and cost trend with alerts — the early warning before the quarterly bill. |
-| 🤝 **Double-blind collaboration** | Live-duplication and solved-reuse matches across developers — paired on **keyphrase topic vectors** with an **objective-aware** bar, so two people on the same problem match even when phrased differently, and generic shared vocabulary doesn't. Precision-first (a false pairing is worse than a miss): **100% precision** on the labelled corpus. Chinese-wall + residency enforced, identities revealed only on mutual consent. Never a manager-visible report. |
-| ♻️ **Reuse-Yield Ledger** | Most tools only count money *spent*. This one also books money **not** spent. When the broker surfaces an already-solved pattern to someone about to re-solve it, an avoided re-solve is booked — valued at the tenant's **winsorized-mean cost-to-solve** for that work (recomputed live, **k-anonymity gated**, never one developer's figure), shown as a savings line *beside* spend, never inside it. The positive mirror of orphan waste. |
-| 🌍 **Cross-tenant Benchmark Exchange** | Tenants are org units / geographies of one org (acme-eu, acme-us, …). Compare them on **ratios only** — cost-per-1k, cache-hit, net-new share, reuse share — with **k-anonymity per tenant**, **differential-privacy** noise, and a **cohort threshold** so no tenant reads another off a too-small cohort. You get a **percentile** within the cohort, never another tenant's raw figure. "Is our US region reusing as much as EU?" answered without either side seeing the other's numbers. |
-| 🔔 **Ambient developer signals** | Waste/collab/budget nudges via native desktop toast, `abenlux watch`, and `abenlux me` — wherever the developer is, no browser. A **background agent** (`abenlux agent install`) starts at login on Linux/macOS/Windows and runs in your own session, so collaboration matches and budget warnings reach you live, even at org scale. |
-| 🔐 **Governance as code** | Edge redaction, derived-only persistence, HMAC pseudonyms, k-anonymity, DP noise, and RBAC where **no role — not even admin — can see another individual's rows**. |
-| 🪶 **Minimal, optional LLM** | When branch + patterns + learned vocabulary all miss, one tiny cached call (OpenAI / Azure / Claude / Gemini) with **extractive prompt compression** classifies intent for fractions of a cent. |
+| **Four ways to spend less** | Abenlux compresses the request on the wire so every tool sends fewer tokens, sends an easy call to a cheaper model, serves a byte identical repeat from a local cache for free, and shows what reusing a teammate's solved work would save. The realized savings show up beside spend, and a failing step is always skipped so a developer's call can never break. |
+| **Model routing** | An easy request like a rename or a format goes to a cheaper model and a real piece of work stays on the strong one, decided on the device from the request alone with no extra model call. It runs for a base url key tool and a subscription tool alike. ABEN_ROUTE=on routes for real, ABEN_ROUTE=shadow only measures what it would save. The dollars are re-derived at the collector, never trusted from the edge. |
+| **Team memory** | When a teammate has already solved something close, in the same language it is ready to reuse, in another language it is a warm start. It matches on the content free embedding only, never the prompt, and is scoped to one tenant so it never crosses an org wall. It runs in shadow first, so a manager turns it on with proof. |
+| **One proxy for any sign in** | A forward HTTPS proxy captures, compresses, routes and caches every tool the same way, whether it signs in with a company subscription or an API key. It terminates TLS for the model API hosts only and tunnels everything else, your browser included, straight through unread, scoped to just the tool you launch with `abenlux run`. |
+| **Spend to value by a join** | The branch or ticket joins to the objective in your knowledge graph, no ML, fully auditable. A content free feed from git or your build system says what shipped, and Abenlux joins it to spend so you see the return, like dollars per merged change. Unmatched spend is orphan spend, the headline waste metric. |
+| **Purpose traceability** | Every dollar is labelled with what it is for, a feature, a fix, a refactor, a chore, and split into net new build versus maintenance, traced to the ticket. Long code heavy prompts are reduced to their salient intent first, so a pasted stack trace is not mislabelled a fix. 98.6 percent accuracy on a 69 prompt corpus, 100 percent on the net new versus maintenance split. |
+| **Budgets, forecast and drift** | A ceiling per objective, a run rate forecast, a projected overrun, and a private nudge to the developer when their objective is over or at risk. Window over window orphan share and cost trend raise an alert before the quarterly bill arrives. |
+| **Double blind collaboration** | Live duplication and solved reuse matches across developers, paired on keyphrase topic vectors with an objective aware bar, so two people on the same problem match even when they phrase it differently. 100 percent precision on the labelled corpus. The client wall and residency are enforced and identities are revealed only on mutual consent. Never a manager visible report. |
+| **Reuse yield ledger** | Most tools only count money spent. This one also books money not spent. When the broker surfaces an already solved pattern to someone about to do it again, the avoided rework is valued at the tenant's winsorized mean cost to solve, k anonymity gated, never one developer's figure, and shown as a savings line beside spend. |
+| **Cross tenant benchmark** | Compare org units or geographies on ratios only, cost per 1k, cache hit, net new share, reuse share, with k anonymity per tenant, differential privacy noise, and a cohort threshold so no tenant reads another off a too small cohort. You get a percentile within the cohort, never another tenant's raw figure. |
+| **Ambient signals, no browser** | The wins reach the developer as a native desktop toast and in `abenlux me`, a routed call, a cache hit, a waste nudge, a collaboration match, a budget warning, wherever they are. A background agent starts at login on Linux, macOS and Windows and runs in the developer's own session, so the nudge finds them without a dashboard. |
+| **Governance as code** | Edge redaction, derived only persistence, HMAC pseudonyms, k anonymity, differential privacy noise, and RBAC where no role, not even admin, can read another individual's rows. |
 
 ---
 
@@ -131,7 +128,7 @@ git clone https://github.com/sarkar4777/abenlux
 cd abenlux
 make install          # pip install -e ".[dev]"
 make demo             # one exchange through the full edge pipeline, offline
-make test             # 324 tests
+make test             # 352 tests
 ```
 
 `make demo` redacts a secret, reassembles a streamed response, prices it, attributes it to an
@@ -288,7 +285,7 @@ same `CollaborationBroker.submit` contract.
 
 ---
 
-## 👩‍💻 For developers: download and configure (separate from the management UI)
+## For developers, download and configure (separate from the management UI)
 
 A developer installs **one** thing — the edge agent — and never needs the dashboard. It runs locally,
 redacts on the device, and (in an org) forwards only content-free records to the collector.
@@ -437,7 +434,7 @@ export AZURE_OPENAI_API_BASE=...   AZURE_OPENAI_API_KEY=...   AZURE_OPENAI_DEPLO
 
 ---
 
-## 🏢 For IT: install the collector + dashboard
+## For IT, install the collector and dashboard
 
 ```bash
 ABEN_HMAC_KEY=<org key> ABEN_DB=<sqlite or postgres dsn> ABEN_KG=knowledge_graph.yaml \
@@ -513,55 +510,35 @@ with and credit** the open tools that pioneered them:
 - **Bifrost "Code Mode"** popularized tool-definition slimming for coding agents; `slim_tools` dedupes
   identical definitions.
 
----
+### Spend even less, model routing and team memory
 
-## What this release adds (in plain words)
+Compression makes every request smaller. Two more savers make whole calls cheaper or free.
 
-Eight new things, grouped by what they are for. Spend less. Get smarter about whether the spend was
-worth it. Help people help each other. Reach more tools. Reproduce all of it with real models from
-[examples/features-e2e](examples/features-e2e/).
+**Model routing.** An easy request, a rename, a format, a one liner, goes to a cheaper model, and a real
+piece of work stays on the strong one. The choice is made on the device from the request alone with no
+extra model call, and it runs for a base url key tool and a subscription tool alike. Turn it on with
+`ABEN_ROUTE=on`, or set `ABEN_ROUTE=shadow` to only measure what it would save. The saving is re-derived
+at the collector from the model names and the token facts, never trusted from the edge.
 
-### Spend less
+**Team memory.** When a teammate has already solved something close, an almost identical ask in the same
+language is ready to reuse, and the same task in another language is a warm start that seeds a better
+answer. It matches on the content free embedding only, never the prompt, and stays inside one tenant so
+it never crosses an org wall. It runs in shadow first, so a manager turns the live version on with proof.
 
-- **Cache breakpoints.** A model can read the unchanging top of your prompt from its own memory instead
-  of being charged for it again. We mark where that steady part ends so the provider keeps it. It
-  changes nothing the model reads, so it is safe and on by default.
-- **Tool result trim.** In an agent session the biggest part of every request is the output of the
-  tools the agent ran, and the same output is sent again every turn. We fold the noise out of it. The
-  instructions and the answer are never touched.
-- **Shadow measure.** A few savers are off by default because they change your prompt text. We run them
-  quietly in the background without touching your call and show what turning each one on would have
-  saved. A manager turns one on with proof, not a guess.
+Both wins reach the developer where they already are. A routed call and a cache hit show up in `abenlux
+me` and as a native desktop toast, so nobody opens a dashboard to see the saving. Reproduce all of it
+across 34 developers, 5 tenants and 13 IDE and CLI tools in
+[examples/routing-teammemory-e2e](examples/routing-teammemory-e2e/).
 
-### Know if the spend was worth it
-
-- **Spend to value.** Spend tells you what the AI cost. It does not tell you if the work shipped. A
-  small content free feed from git or your build system tells us whether a change merged, whether it was
-  reverted, and how many lines it touched. We join that to spend and show the return, like dollars per
-  merged change. Nothing here is a guess and nothing here is your code.
-- **Orphan recovery.** Orphan spend is AI money that did not tie to any goal, and it is the headline
-  waste number. We group the untracked work that is about the same thing, and when enough people share a
-  group we propose a name for it. A manager accepts once and that work tracks itself from then on, so
-  tomorrow's waste pool is smaller.
-
-### Help people help each other
-
-- **Solution capsules.** When you start on something the team already cracked, you now see a small
-  content free card right away. It says which model and tool cracked it and a rough cost band, so you
-  pick the right model first. It holds no code and no prompt.
-- **Ask without waiting.** You can send the person who solved your problem one question right away,
-  before any introduction, and they answer when they are around. Neither side sees who the other is
-  until you both agree. Every message is cleaned of secrets before it is stored.
-
-### Reach more tools
-
-- **A tool for your coding agent.** Run `abenlux mcp` and the agent can ask, in the middle of a task,
-  am I over budget, has anyone solved this, what is this branch for, and what would this call cost. It
-  only ever returns your own data and adds no new permission.
-- **Compare across companies, safely.** Every company wants to know how its AI efficiency stacks up
-  against its peers, but none will hand over raw numbers. So each company blurs its own numbers on its
-  own machine and sends only the blurred version. The exchange waits until enough companies have joined,
-  then tells each one only its rank in the group, never another company's number.
+<div align="center">
+<img src="docs/routing-teammemory-report.png" alt="abenlux report showing compression, routing and team memory yield" width="860">
+<br><em>abenlux report. Compression yield, routing yield, and team memory shadow, stacked beside spend
+and budgets, all k anonymized.</em>
+<br><br>
+<img src="docs/routing-teammemory-me.png" alt="abenlux me showing routing saved and team memory warm starts" width="780">
+<br><em>abenlux me. A developer's private view with what routing saved them and how many warm starts a
+teammate's work gave them. Never visible to management.</em>
+</div>
 
 ---
 
@@ -642,25 +619,25 @@ abenlux detect / sync-cursor               detected tool / pull Tier-3 Cursor us
 
 ## Testing
 
-324 unit + integration tests, including an **exhaustive multi-user org simulation**, the **real
-Anthropic, OpenAI, and Azure OpenAI SDKs driven through a live gateway**, wire-format tests pinned
-from genuine **Claude Code, Gemini CLI, and Codex (Responses API)** traffic, a self-learning loop
-test, a **multi-tenant + Reuse-Yield Ledger + Benchmark Exchange** suite (tenant scoping, k-anon
-savings, DP-noised cross-tenant percentiles, and the org/residency walls), and a Playwright browser
-test of every dashboard screen and role. The supported CLI tools were additionally exercised
-end-to-end against a running gateway (see the verification note above).
+352 unit and integration tests. They include an exhaustive multi user org simulation, the real
+Anthropic, OpenAI and Azure OpenAI SDKs driven through a live gateway, wire format tests pinned from
+genuine Claude Code, Gemini CLI and Codex traffic, a self learning loop test, a multi tenant suite
+covering the reuse yield ledger and the benchmark exchange with tenant scoping, k anon savings, DP
+noised cross tenant percentiles and the org and residency walls, model routing and team memory through
+the real collector, the subscription developer experience through the forward proxy, and a Playwright
+browser test of every dashboard screen and role.
 
-Two labelled accuracy corpora keep the parts management and developers rely on honest:
+Two labelled accuracy corpora keep the parts management and developers rely on honest.
 
-- **Intent (work-type)** — 69 prompts spanning terse, verbose, polite, symptom-style, multi-part, and
-  code/stack-trace-laden phrasings: **98.6%** label accuracy and **100%** on the net-new-vs-maintenance
-  split management reports ([tests/test_intent_corpus.py](tests/test_intent_corpus.py)).
-- **Collaboration** — labelled task groups across objectives: **100% precision** (it never pairs two
-  people who aren't actually on the same problem) at **100% recall** on the corpus
+- Intent. 69 prompts spanning terse, verbose, polite, symptom style, multi part and code heavy
+  phrasings, at 98.6 percent label accuracy and 100 percent on the net new versus maintenance split
+  ([tests/test_intent_corpus.py](tests/test_intent_corpus.py)).
+- Collaboration. Labelled task groups across objectives at 100 percent precision and 100 percent recall,
+  so it never pairs two people who are not actually on the same problem
   ([tests/test_collab_corpus.py](tests/test_collab_corpus.py)).
 
 ```bash
-make test       # 324 tests
+make test       # 352 tests
 make lint       # ruff (incl. no-semicolon style)
 ```
 

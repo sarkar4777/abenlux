@@ -128,9 +128,11 @@ proxy uses (`compress_request` then `gateway._capture`), and forward to the real
 tool's own credential untouched. Two rules bound it. It only terminates TLS for the known model API
 hosts and tunnels every other host straight through unread, and the launcher `abenlux run <tool>` sets
 the proxy and the trusted certificate for just that one process, so the browser and everything else are
-never touched. Because the request is rewritten on the wire here, compression works for a subscription
-tool and a key tool alike, which is why a separate tool-output compressor at the agent's hook layer is
-no longer required. The forward proxy is exercised against the real provider in `examples/proxy-e2e`,
+never touched. Because the request is read and rewritten on the wire here, compression, model routing and
+the exact match cache all work for a subscription tool and a key tool alike, which is why a separate
+tool-output compressor at the agent's hook layer is no longer required, and why a developer signed in
+with a subscription gets the same savings as one bringing a key. The forward proxy is exercised against
+the real provider in `examples/proxy-e2e`,
 and `examples/proxy-suite-e2e` drives **both** capture paths side by side in one run, the base-url
 gateway and the forward proxy, six developers and tools across all three providers with real keys,
 asserting **17 checks** including the traffic-isolation proof (a non-model host validates against the
@@ -277,6 +279,38 @@ also runs the off by default savers quietly in the background without changing t
 each one would have saved into a content free field, so the report can show what enabling one would save
 with evidence. None of this slows the developer's call.
 
+## Model routing
+
+`route.py` decides, on the device and from the request body alone, whether a call is easy enough to send
+to a cheaper model. It reads only cheap signals, the work the prompt asks for, the size of the request,
+and whether a tool loop is in play, so there is no extra model call. It is conservative by design and
+routes down only when the request clearly looks small and low risk, so a real piece of work is never
+quietly handled by a weaker model. The gateway and the forward proxy both call it before they forward, so
+a base url key tool and a subscription tool are routed the same way. `ABEN_ROUTE=on` rewrites the model
+for real, `ABEN_ROUTE=shadow` leaves the call alone and only records what routing would have saved. The
+saving is re-derived at the collector in `_harden_inbound` from the two model names and the clamped token
+facts, so a buggy or hostile edge can never inflate the routing yield.
+
+## Team memory
+
+`teammemory.py` is a content free index that runs at the collector, where every developer's records meet.
+For each new record it looks for a close earlier one from a different teammate in the same tenant, matched
+on the embedding only, never the prompt. An almost identical ask in the same language is labelled serve,
+the answer could have been reused as is. The same task in another language, told apart by a coarse content
+free language tag stamped on the device, is a warm start, a strong head start for a better answer. It
+changes no call. It records what a live team memory would have saved, so a manager turns the live version
+on with proof. It is scoped to one tenant, so it never crosses the org wall the broker already enforces.
+
+## How a saving reaches the developer
+
+A developer never has to open a dashboard to see a win. A routed call and a cache hit are written to the
+private on device feed and raised as a native desktop toast by the background agent, the same path the
+waste, collaboration and budget nudges already use. The agent runs as a user level unit in the
+developer's own session, a systemd user service on Linux, a launchd LaunchAgent on macOS, and a Startup
+folder launcher on Windows, which is the only place the desktop notification daemons live. So whether a
+developer works from the terminal or from an IDE with a Claude style plugin, the saving finds them where
+they already are.
+
 ## What this release adds
 
 A set of new modules sit beside the existing core, each one small and read mostly, and each one keeps
@@ -350,16 +384,18 @@ the environment. Service-manager calls are best-effort (tolerant of a missing `s
 
 ## Testing topology
 
-`make test` runs **324 tests**: pure-core unit tests; FastAPI `TestClient` for RBAC/API; subprocess
-end-to-end runs of the **real Anthropic, OpenAI, and Azure OpenAI SDKs** through a live gateway + mock
-upstream (`test_real_sdk.py`); wire-format tests pinned from genuine **Claude Code, Gemini CLI, and
-Codex (Responses API)** traffic (`test_tool_capture.py`, `test_claude_code_otel.py`); a full
-edge→collector forward loop (`test_forwarding.py`); labelled accuracy corpora for intent and
-collaboration (`test_intent_corpus.py`, `test_collab_corpus.py`); the background agent and its per-OS
-units (`test_agent.py`); a simulated team exercising suggestions, collaboration walls/consent, and
-drift (`test_multiuser.py`, `test_exhaustive.py`); and the multi-tenant plane with the Reuse-Yield
-Ledger and Benchmark Exchange (`test_tenants_ledger_benchmark.py`) — tenant scoping, k-anon savings,
-DP-noised cross-tenant percentiles, and the org/residency walls (cross-org tenant access → 403). That
+`make test` runs **352 tests**. They span the pure core unit tests, a FastAPI `TestClient` for RBAC and
+the API, subprocess end to end runs of the real Anthropic, OpenAI and Azure OpenAI SDKs through a live
+gateway and mock upstream (`test_real_sdk.py`), wire format tests pinned from genuine Claude Code, Gemini
+CLI and Codex traffic (`test_tool_capture.py`, `test_claude_code_otel.py`), a full edge to collector
+forward loop (`test_forwarding.py`), labelled accuracy corpora for intent and collaboration
+(`test_intent_corpus.py`, `test_collab_corpus.py`), the background agent and its per OS units
+(`test_agent.py`), model routing and team memory through the real collector (`test_route.py`,
+`test_teammemory.py`, `test_routing_teammemory.py`), the subscription developer experience through the
+forward proxy (`test_dev_experience.py`), a simulated team exercising suggestions, collaboration walls
+and consent, and drift (`test_multiuser.py`, `test_exhaustive.py`), and the multi tenant plane with the
+reuse yield ledger and the benchmark exchange (`test_tenants_ledger_benchmark.py`) covering tenant
+scoping, k anon savings, DP noised cross tenant percentiles, and the org and residency walls. That
 last suite was hardened by a multi-agent adversarial review (independent attackers + skeptic
 verification): the org-hijack 409, the read-time-recompute ledger, the winsorized cost-to-solve, the
 small-cohort order-stat withholding, and the broker org wall each pin a confirmed finding.

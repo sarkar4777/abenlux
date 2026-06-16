@@ -182,6 +182,18 @@ def _harden_inbound(rec: DerivedRecord) -> None:
     cb = cost_usd(rec.request_model, rec.input_tokens, rec.output_tokens,
                   cache_read_tokens=rec.cache_read_tokens, cache_creation_tokens=rec.cache_creation_tokens)
     rec.cost_usd, rec.cost_priced = cb.total, cb.priced
+    # re-derive the routing saving from the model names and clamped tokens, never trust the edge dollars.
+    # when the cheaper model was actually sent (request_model is the route target) the saving is realized,
+    # otherwise it is the shadow number for a saving routing would have made.
+    rec.route_saved_usd, rec.route_shadow_usd = 0.0, 0.0
+    if rec.original_model and rec.route_target:
+        from abenlux.route import saving_usd
+        s = saving_usd(rec.original_model, rec.route_target, rec.input_tokens, rec.output_tokens,
+                       rec.cache_read_tokens, rec.cache_creation_tokens)
+        if rec.request_model == rec.route_target:
+            rec.route_saved_usd = s
+        else:
+            rec.route_shadow_usd = s
     for f in ("repo", "objective_label", "ticket_id", "work_type", "tool"):
         v = getattr(rec, f, None)
         if isinstance(v, str) and v:
@@ -192,6 +204,26 @@ def _harden_inbound(rec: DerivedRecord) -> None:
 # its signal buffer (a buggy/hostile edge could otherwise evict the real cohort with one huge request).
 _MAX_INGEST_BATCH = int(os.getenv("ABEN_MAX_INGEST_BATCH", "1000"))
 _MAX_INGEST_BYTES = int(float(os.getenv("ABEN_MAX_INGEST_MB", "32")) * 1024 * 1024)  # bound body before parse
+
+# team memory (shadow). a content free index that measures what reusing a teammate's solved work would
+# save. only built when ABEN_TM is set, so the default posture is untouched.
+_TEAM_MEMORY = None
+
+
+def _team_memory_stamp(rec: DerivedRecord) -> None:
+    global _TEAM_MEMORY
+    if os.getenv("ABEN_TM") not in ("shadow", "on"):
+        return
+    from abenlux.teammemory import TeamMemory
+    if _TEAM_MEMORY is None:
+        _TEAM_MEMORY = TeamMemory()
+    m = _TEAM_MEMORY.match(rec.tenant_id, rec.embedding, rec.language, rec.request_model,
+                           rec.actor_pseudonym, rec.cost_usd or 0.0)
+    if m:
+        rec.tm_tier, rec.tm_similarity = m.tier, m.similarity
+        rec.tm_same_language, rec.tm_solver, rec.tm_shadow_usd = m.same_language, m.solver, m.shadow_usd
+    _TEAM_MEMORY.add(rec.tenant_id, rec.embedding, rec.language, rec.request_model,
+                     rec.actor_pseudonym, rec.cost_usd or 0.0)
 
 
 @app.post("/v1/derived")
@@ -238,6 +270,7 @@ async def ingest_derived(request: Request, authorization: str | None = Header(de
                     continue
                 rec.tenant_id = principal.tenant_id   # bind tenant to the authenticated developer
             _harden_inbound(rec)                # re-price authoritatively + re-redact free-text fields
+            _team_memory_stamp(rec)             # shadow team memory match, content free
             store.insert(rec)
             _match_centrally(rec, mstore, ledger, _org_for(rec, tenants, org_cache),
                              _residency_for(rec, tenants, org_cache), capsules=capsules)

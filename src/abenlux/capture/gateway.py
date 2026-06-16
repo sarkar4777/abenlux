@@ -354,7 +354,7 @@ def _work_overrides(headers) -> dict:
 
 def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, latency: float,
              overrides: dict | None = None, response_api: bool = False,
-             compress_info: dict | None = None) -> None:
+             compress_info: dict | None = None, route_info: dict | None = None) -> None:
     """run a completed exchange through the edge pipeline. never raises into the request path.
     req_json is the request AS SENT (post-compression), so capture prices the real, smaller call."""
     try:
@@ -421,6 +421,29 @@ def _capture(provider: Provider, req_json: dict, raw: bytes, streamed: bool, lat
                     result.record.shadow_savings = json.dumps(shadow)
             except Exception:
                 _log_capture_error("shadow")
+        # coarse content-free language of the request, used by team memory at the collector
+        try:
+            from abenlux.route import _last_user_text
+            from abenlux.teammemory import detect_language
+            if isinstance(req_json, dict):
+                result.record.language = detect_language(_last_user_text(req_json, provider.value))
+        except Exception:
+            pass
+        # model routing facts. the cheaper price delta is computed from the real token counts
+        if route_info:
+            try:
+                from abenlux.route import saving_usd
+                rec = result.record
+                rec.original_model = route_info.get("original")
+                rec.route_target = route_info.get("target")
+                s = saving_usd(route_info.get("original") or "", route_info.get("target") or "",
+                               rec.input_tokens, rec.output_tokens, rec.cache_read_tokens, rec.cache_creation_tokens)
+                if route_info.get("mode") == "on":
+                    rec.route_saved_usd = s
+                else:
+                    rec.route_shadow_usd = s
+            except Exception:
+                _log_capture_error("route_stamp")
         _sink.insert(result.record)  # forward to collector or write the shared store
         if _dev_store is not _store:  # solo mode already wrote via the sink's SqliteSink (same store)
             _dev_store.insert(result.record)  # personal copy on-device for the developer knowledge graph
@@ -448,7 +471,7 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         url = f"{url}?{request.url.query}"
     started = time.perf_counter()
 
-    # --- compression layer: rewrite the OUTBOUND request to save tokens. defensive - any failure keeps
+    #compression layer: rewrite the OUTBOUND request to save tokens. defensive - any failure keeps
     # the original body, so compression can never break the developer's call. runs on every tool. ---
     compress_info = {"saved": 0, "applied": "", "cached": False}
     try:
@@ -465,7 +488,22 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
     except Exception:
         _log_capture_error("compress")
 
-    # --- exact-match cache: a byte-identical NON-STREAMED repeat is served locally, upstream call avoided
+    #model routing: send an easy request to a cheaper model (on), or just measure it (shadow) ---
+    route_info = None
+    try:
+        _mode = getattr(SETTINGS, "route", None)
+        if _mode in ("on", "shadow") and isinstance(req_json, dict):
+            from abenlux.route import decide
+            _d = decide(req_json, provider.value)
+            if _d.target:
+                route_info = {"original": _d.original, "target": _d.target, "mode": _mode}
+                if _mode == "on":
+                    req_json["model"] = _d.target
+                    body = json.dumps(req_json).encode()
+    except Exception:
+        _log_capture_error("route")
+
+    # exact-match cache: a byte-identical NON-STREAMED repeat is served locally, upstream call avoided
     _actor = overrides.get("actor") or current_actor() or "local"
     _route = f"{path}?{request.url.query}" if request.url.query else path
     cache_key = (_exact_key(provider, body, _actor, getattr(SETTINGS, "tenant_id", "default"), _route)
@@ -529,7 +567,7 @@ async def _proxy(request: Request, provider: Provider, path: str, upstream: str 
         if cache_key is not None and not truncated["hit"] and upstream.status_code < 300:
             _exact_put(cache_key, upstream.status_code,
                        resp_headers.get("content-type") or "application/json", body_bytes)
-        _capture(provider, req_json, body_bytes, streamed, latency, overrides, response_api, compress_info)
+        _capture(provider, req_json, body_bytes, streamed, latency, overrides, response_api, compress_info, route_info)
 
     return StreamingResponse(
         tee(), status_code=upstream.status_code, headers=resp_headers,

@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. This project adheres to semantic
 versioning.
 
+## [0.6.0] - 2026-06
+
+Two more ways to spend fewer tokens, built on the edge gateway and the collector, proven across a team
+of more than twenty five developers signing in both ways.
+
+### Added
+- Model routing (route.py + the gateway). An easy request is sent to a cheaper model, a real piece of
+  work stays on the strong one. The decision is made on the device from the request alone, no extra
+  model call, and is conservative so genuine work is never quietly handled by a weaker model.
+  ABEN_ROUTE=on sends easy calls down for real, ABEN_ROUTE=shadow only measures what it would save. The
+  realized or shadow dollars are re-derived authoritatively at the collector from the model names and the
+  clamped token facts, never trusted from the edge.
+- Team memory in shadow (teammemory.py + the collector ingest). A content-free index that, for each new
+  request, finds a close earlier one from a different teammate in the same tenant and labels it serve (an
+  almost identical ask in the same language, ready to reuse) or warm_start (the same task in another
+  language). It changes no call and matches on the embedding only, never the prompt, so it records what a
+  live team memory would save before anyone turns the live version on. Scoped to one tenant, so it never
+  crosses an org wall.
+- A coarse content-free language tag on each record, so team memory can tell a Python solution from a Go
+  one.
+- Routing yield and team-memory yield in the management report and the developer view, beside compression
+  and reuse-yield, k-anonymity gated.
+- A new end-to-end example (examples/routing-teammemory-e2e) that drives 34 developers across 5 tenants
+  and 13 IDE and CLI tools, both sign-ins, and renders the developer CLI screenshots.
+
 ## [0.5.0] - 2026-06
 
 The forward proxy. One capture path that works no matter how a tool signs in, a company subscription or

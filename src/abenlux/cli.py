@@ -282,6 +282,17 @@ def cmd_report(args) -> None:
     for name, d in (cz.get("shadow") or {}).items():
         if d.get("usd", 0) >= 0.01:
             print(f" would save : enabling {name} would save ~{d['tokens']:,} tokens (~${d['usd']:,.2f})")
+    rt = rep.get("routing") or {}
+    if rt.get("saved_usd"):
+        print(f" routing yield : ~${rt['saved_usd']:,.2f} saved by sending {rt['routed_calls']} easy "
+              f"calls to a cheaper model")
+    elif rt.get("shadow_usd", 0) >= 0.01:
+        print(f" would save : routing easy calls to a cheaper model would save ~${rt['shadow_usd']:,.2f} "
+              f"({rt['routed_calls']} calls)")
+    tm = rep.get("team_memory") or {}
+    if tm.get("shadow_usd", 0) >= 0.01:
+        print(f" team memory (shadow) : ~${tm['shadow_usd']:,.2f} if teammates reused solved work  "
+              f"({tm.get('serve_hits', 0)} ready to reuse, {tm.get('warm_starts', 0)} warm starts)")
     if rep["unpriced_events"]:
         print(f" unpriced events : {rep['unpriced_events']} (model not in price table)")
     trend = rep.get("trend")
@@ -358,6 +369,14 @@ def cmd_me(args) -> None:
     mix = rep.get("work_type_mix") or []
     if mix:
         print(" your work mix: " + "  ".join(f"{m['label']} ${m['cost']:,.2f}" for m in mix))
+    sv = rep.get("savings") or {}
+    if sv.get("route_saved_usd"):
+        print(f" routing saved you ~${sv['route_saved_usd']:,.4f} (easy calls sent to a cheaper model)")
+    elif sv.get("route_shadow_usd", 0) >= 0.0001:
+        print(f" routing would save you ~${sv['route_shadow_usd']:,.4f} on easy calls (shadow)")
+    if sv.get("tm_serve_hits") or sv.get("tm_warm_starts"):
+        print(f" team memory: {sv.get('tm_serve_hits', 0)} of your asks a teammate already solved, "
+              f"{sv.get('tm_warm_starts', 0)} warm starts  (~${sv.get('tm_shadow_usd', 0):,.4f})")
     print(" (private to you, never visible to management)")
     print("\n recent nudges (this device only):")
     for e in LocalSignalFeed().recent(args.n):

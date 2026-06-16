@@ -204,5 +204,21 @@ class DerivedRecord:
     shadow_savings: Optional[str] = None        # JSON map strategy -> tokens it WOULD remove if enabled
     served_from_cache: bool = False      # the whole call was served from the local exact-match cache
 
+    # coarse content-free language of the work (python, go, rust ...), used by team memory
+    language: Optional[str] = None
+
+    # model routing. original_model is what the developer asked for, request_model is what we sent.
+    original_model: Optional[str] = None
+    route_target: Optional[str] = None       # cheaper model the router picked
+    route_saved_usd: float = 0.0             # realized saving when routing is live
+    route_shadow_usd: float = 0.0            # saving routing WOULD make if it were turned on
+
+    # team memory. a teammate already solved something close, matched on the content-free embedding.
+    tm_tier: Optional[str] = None            # serve or warm_start
+    tm_similarity: float = 0.0
+    tm_same_language: Optional[bool] = None
+    tm_solver: Optional[str] = None          # pseudonym of the teammate who solved it first
+    tm_shadow_usd: float = 0.0               # saving team memory WOULD make if it were turned on
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

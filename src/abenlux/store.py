@@ -52,6 +52,9 @@ _COLUMNS = [
     "attribution_method", "attribution_confidence",
     "ticket_id", "work_type", "work_type_source", "residency", "tenant_id",
     "saved_input_tokens", "compression", "compression_detail", "shadow_savings", "served_from_cache",
+    "language",
+    "original_model", "route_target", "route_saved_usd", "route_shadow_usd",
+    "tm_tier", "tm_similarity", "tm_same_language", "tm_solver", "tm_shadow_usd",
 ]
 
 # portable DDL (works on both engines), booleans are stored 0/1 for parity.
@@ -71,7 +74,11 @@ def _ddl(ts_type: str, int_type: str, real_type: str) -> list[str]:
           attribution_method TEXT, attribution_confidence {real_type},
           ticket_id TEXT, work_type TEXT, work_type_source TEXT, residency TEXT, tenant_id TEXT,
           saved_input_tokens {int_type}, compression TEXT, compression_detail TEXT,
-          shadow_savings TEXT, served_from_cache {int_type}
+          shadow_savings TEXT, served_from_cache {int_type},
+          language TEXT,
+          original_model TEXT, route_target TEXT, route_saved_usd {real_type}, route_shadow_usd {real_type},
+          tm_tier TEXT, tm_similarity {real_type}, tm_same_language {int_type}, tm_solver TEXT,
+          tm_shadow_usd {real_type}
         )""",
         "CREATE INDEX IF NOT EXISTS idx_obj ON derived(objective_id)",
         "CREATE INDEX IF NOT EXISTS idx_actor ON derived(actor_pseudonym)",
@@ -86,8 +93,9 @@ def _coltypes(int_type: str, real_type: str) -> dict:
     # column -> sql type, used to add any missing columns when opening an older db
     ints = {"input_tokens", "output_tokens", "duplicate_history_tokens", "cache_read_tokens",
             "cache_creation_tokens", "tokens_estimated", "cost_priced", "is_retry_loop", "is_orphan",
-            "saved_input_tokens", "served_from_cache"}
-    reals = {"ts", "cost_usd", "quality_score", "acceptance", "retry_similarity", "attribution_confidence"}
+            "saved_input_tokens", "served_from_cache", "tm_same_language"}
+    reals = {"ts", "cost_usd", "quality_score", "acceptance", "retry_similarity", "attribution_confidence",
+             "route_saved_usd", "route_shadow_usd", "tm_similarity", "tm_shadow_usd"}
     out = {}
     for c in _COLUMNS:
         out[c] = int_type if c in ints else (real_type if c in reals else "TEXT")
@@ -108,6 +116,10 @@ def _values(r: DerivedRecord) -> tuple:
         r.ticket_id, r.work_type, r.work_type_source, r.residency, r.tenant_id,
         r.saved_input_tokens, r.compression, r.compression_detail, r.shadow_savings,
         int(r.served_from_cache),
+        r.language,
+        r.original_model, r.route_target, r.route_saved_usd, r.route_shadow_usd,
+        r.tm_tier, r.tm_similarity,
+        None if r.tm_same_language is None else int(r.tm_same_language), r.tm_solver, r.tm_shadow_usd,
     )
 
 
@@ -252,6 +264,31 @@ class _BaseStore:
                 continue
         return out
 
+    def routing_totals(self, tenant: str | None = None) -> dict:
+        # dollars the model router saved (live) or would save (shadow)
+        pred, params = self._tenant_pred(tenant)
+        r = self._rows(self._exec(
+            "SELECT COALESCE(SUM(route_saved_usd),0) saved, COALESCE(SUM(route_shadow_usd),0) shadow, "
+            "COALESCE(SUM(CASE WHEN route_target IS NOT NULL THEN 1 ELSE 0 END),0) routed "
+            "FROM derived" + self._and(pred), params))[0]
+        return {"saved_usd": round(r.get("saved") or 0, 4), "shadow_usd": round(r.get("shadow") or 0, 4),
+                "routed_calls": int(r.get("routed") or 0)}
+
+    def team_memory_totals(self, tenant: str | None = None) -> dict:
+        # serve hits and warm starts a team memory would produce, with the dollars beside them
+        pred, params = self._tenant_pred(tenant)
+        where = " WHERE tm_tier IS NOT NULL" + (f" AND {pred}" if pred else "")
+        rows = self._rows(self._exec(
+            "SELECT tm_tier tier, COUNT(*) n, COALESCE(SUM(tm_shadow_usd),0) usd "
+            "FROM derived" + where + " GROUP BY tm_tier", params))
+        by_tier = {r["tier"]: {"matches": int(r["n"]), "usd": round(r.get("usd") or 0, 4)} for r in rows}
+        return {
+            "serve_hits": by_tier.get("serve", {}).get("matches", 0),
+            "warm_starts": by_tier.get("warm_start", {}).get("matches", 0),
+            "shadow_usd": round(sum(t["usd"] for t in by_tier.values()), 4),
+            "by_tier": by_tier,
+        }
+
     def rollup(self, dimension: str, tenant: str | None = None) -> list[dict]:
         allowed = {
             "objective": "objective_label", "tool": "tool", "model": "request_model",
@@ -368,6 +405,20 @@ class _BaseStore:
             "COUNT(*) AS calls FROM derived WHERE actor_pseudonym=? GROUP BY label ORDER BY cost DESC",
             (actor_pseudonym,),
         ))
+
+    def actor_savings(self, actor_pseudonym: str) -> dict:
+        # one developer's own routing + team memory signals for their private view
+        r = self._rows(self._exec(
+            "SELECT COALESCE(SUM(route_saved_usd),0) route_saved, COALESCE(SUM(route_shadow_usd),0) route_shadow, "
+            "COALESCE(SUM(CASE WHEN tm_tier='serve' THEN 1 ELSE 0 END),0) serve_hits, "
+            "COALESCE(SUM(CASE WHEN tm_tier='warm_start' THEN 1 ELSE 0 END),0) warm_starts, "
+            "COALESCE(SUM(tm_shadow_usd),0) tm_shadow "
+            "FROM derived WHERE actor_pseudonym=?", (actor_pseudonym,)))[0]
+        return {"route_saved_usd": round(r.get("route_saved") or 0, 4),
+                "route_shadow_usd": round(r.get("route_shadow") or 0, 4),
+                "tm_serve_hits": int(r.get("serve_hits") or 0),
+                "tm_warm_starts": int(r.get("warm_starts") or 0),
+                "tm_shadow_usd": round(r.get("tm_shadow") or 0, 4)}
 
     def actor_summary(self, actor_pseudonym: str, *, start_ts: float | None = None,
                       end_ts: float | None = None) -> dict:

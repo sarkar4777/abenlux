@@ -53,6 +53,9 @@ class Settings:
     # (lossless, big win on retries/loops). on by default with a short TTL; ABEN_EXACT_CACHE=0 disables.
     exact_cache: bool = os.getenv("ABEN_EXACT_CACHE", "1") != "0"
     exact_cache_ttl_s: float = float(os.getenv("ABEN_EXACT_CACHE_TTL", "300"))
+    # model routing. unset/off -> nothing. "shadow" -> measure what routing easy calls to a cheaper
+    # model would save, change nothing. "on" -> actually send easy calls to the cheaper model.
+    route: str | None = os.getenv("ABEN_ROUTE") or None
 
     @property
     def hmac_bytes(self) -> bytes:

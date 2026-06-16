@@ -99,6 +99,17 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         }
     else:
         compression = {"suppressed": True}
+    # model routing + team memory, behind the same k wall as the dollar total
+    if org_clears_k:
+        rt = store.routing_totals(tenant)
+        routing = {"saved_usd": rt["saved_usd"], "shadow_usd": rt["shadow_usd"],
+                   "routed_calls": rt["routed_calls"]}
+        tmt = store.team_memory_totals(tenant)
+        team_memory = {"serve_hits": tmt["serve_hits"], "warm_starts": tmt["warm_starts"],
+                       "shadow_usd": tmt["shadow_usd"], "by_tier": tmt["by_tier"]}
+    else:
+        routing = {"suppressed": True}
+        team_memory = {"suppressed": True}
     # value: join the content-free outcome feed to spend so the report shows return on spend, not just
     # spend. only released when the whole org clears k, the same wall the dollar total sits behind.
     value = None
@@ -191,6 +202,8 @@ def management_report(store: DerivedStore, *, k: int = 5, dp_epsilon: float = 1.
         # placeholder cost. surface it as a count + a flag so the headline total is honestly incomplete.
         "unpriced_spend_present": totals["unpriced"] > 0,
         "compression": compression,                  # tokens/$ saved by the edge compression layer + cache hits
+        "routing": routing,                          # $ saved by sending easy calls to a cheaper model
+        "team_memory": team_memory,                  # $ reusing a teammate's solved work would save
         "value": value,                              # spend joined to shipped-work outcomes (None until fed)
         "cache_hit_ratio": cache_hit_ratio,
         "cache_read_tokens": cache_read,
@@ -219,5 +232,6 @@ def developer_report(store: DerivedStore, actor_pseudonym: str) -> dict:
         "uncached_resent_tokens": max(0, s["dup_tokens"] - s.get("cache_read", 0)),
         "work_type_mix": [{"label": r["label"], "cost": round(r["cost"], 4), "calls": r["calls"]}
                           for r in store.actor_work_types(actor_pseudonym)],
+        "savings": store.actor_savings(actor_pseudonym),
         "note": "private to you, never visible to management",
     }
